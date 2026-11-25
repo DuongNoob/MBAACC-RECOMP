@@ -1,0 +1,6108 @@
+{
+  "schema_version": 1,
+  "source_archive": "0006.p",
+  "byoc_policy": "metadata_and_disassembly_only_no_raw_assets",
+  "summary": {
+    "cfx_count": 9,
+    "technique_count": 22,
+    "pass_count": 28,
+    "shader_blob_count": 29
+  },
+  "reference_hlsl_txt": {
+    "file": "sh_bloom_sakura.txt",
+    "virtual_path": ".\\Shader\\sh_bloom_sakura.txt",
+    "byte_size": 3446,
+    "line_count": 154,
+    "sha256": "03ef5fcfd7d2e105dea6212e6a36330485bdd316763ce723604f8ff62a7fdaac",
+    "techniques_declared": [
+      "TecSakuraBloom",
+      "TecSakuraBloom_Ready",
+      "TecSakuraBloom_Update"
+    ]
+  },
+  "effects": [
+    {
+      "file": "sh_bloom_sakura.cfx",
+      "byte_size": 4628,
+      "sha256": "d3acc89415b9e7d693a7fa643b9f68a97543dcc4a8d718eac1875db4a49dee76",
+      "header": {
+        "magic": "0xfeff0901",
+        "header_offset": 796,
+        "param_count": 7,
+        "technique_count": 3,
+        "unk_count": 11,
+        "object_count": 9
+      },
+      "parameters": [
+        {
+          "name": "TexSample_Empty",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": []
+          }
+        },
+        {
+          "name": "targetTex0",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 1
+          }
+        },
+        {
+          "name": "Tex_Target0",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 2
+                },
+                "resolved_name": "targetTex0"
+              },
+              {
+                "state": "MinFilter",
+                "value": "Linear"
+              },
+              {
+                "state": "MagFilter",
+                "value": "Linear"
+              }
+            ]
+          }
+        },
+        {
+          "name": "targetTex1",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 3
+          }
+        },
+        {
+          "name": "Tex_Target1",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 4
+                },
+                "resolved_name": "targetTex1"
+              },
+              {
+                "state": "MinFilter",
+                "value": "Linear"
+              },
+              {
+                "state": "MagFilter",
+                "value": "Linear"
+              }
+            ]
+          }
+        },
+        {
+          "name": "bloom_texelA",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "bloom_texelB",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0
+          ]
+        }
+      ],
+      "techniques": [
+        {
+          "index": 0,
+          "name": "TecSakuraBloom",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 5,
+                  "shader_blob_index": 3,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "name": "TecSakuraBloom_Ready",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 6,
+                  "shader_blob_index": 2,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "name": "TecSakuraBloom_Update",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 7,
+                  "shader_blob_index": 1,
+                  "profile": "ps_2_0"
+                }
+              ]
+            },
+            {
+              "name": "P1",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 8,
+                  "shader_blob_index": 0,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "string_objects": {
+        "2": "targetTex0",
+        "4": "targetTex1"
+      },
+      "shaders": [
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 1444,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "Tex_Target1",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "bloom_texelB",
+                "register_set": "float4",
+                "register": "c6",
+                "register_index": 6,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": {
+            "version": "0x46580201",
+            "chunks": [
+              {
+                "tag": "CTAB",
+                "bytes": 148,
+                "ctab": {
+                  "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+                  "target": "tx",
+                  "version": "0x46580201",
+                  "flags": 536871168,
+                  "constants": [
+                    {
+                      "name": "bloom_texelB",
+                      "register_set": "float4",
+                      "register": "c0",
+                      "register_index": 0,
+                      "register_count": 1,
+                      "class": "vector",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 2,
+                      "elements": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "tag": "PRSI",
+                "bytes": 44,
+                "prsi_header": [
+                  0,
+                  0,
+                  0,
+                  6
+                ]
+              },
+              {
+                "tag": "CLIT",
+                "bytes": 100,
+                "literals": [
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  4.0,
+                  3.0,
+                  -2.0,
+                  -3.0,
+                  -4.0,
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              {
+                "tag": "FXLC",
+                "bytes": 276,
+                "instruction_count": 6
+              }
+            ]
+          },
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [
+            {
+              "register": "c7",
+              "value": [
+                0.07500000298023224,
+                0.05000000074505806,
+                0.10000000149011612,
+                0.15000000596046448
+              ]
+            },
+            {
+              "register": "c8",
+              "value": [
+                0.25,
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c7, 0.075, 0.05, 0.1, 0.15",
+            "def c8, 0.25, 0, 0, 0",
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "texld r0, t0, s0",
+            "mov r1, c8.y",
+            "mov oC0, r1",
+            "add r1.xy, t0, c1",
+            "add r2.xy, t0, c0",
+            "add r3.xy, t0, c2",
+            "add r4.xy, t0, c6",
+            "add r5.xy, t0, -c6",
+            "add r6.xy, t0, c3",
+            "add r7.xy, t0, c4",
+            "add r8.xy, t0, c5",
+            "texld r1, r1, s0",
+            "texld r2, r2, s0",
+            "texld r3, r3, s0",
+            "texld r4, r4, s0",
+            "texld r5, r5, s0",
+            "texld r6, r6, s0",
+            "texld r7, r7, s0",
+            "texld r8, r8, s0",
+            "mul r1, r1, c7.x",
+            "mad r1, r2, c7.y, r1",
+            "mad r1, r3, c7.z, r1",
+            "mad r1, r4, c7.w, r1",
+            "mad r0, r0, c8.x, r1",
+            "mad r0, r5, c7.w, r0",
+            "mad r0, r6, c7.z, r0",
+            "mad r0, r7, c7.x, r0",
+            "mad r0, r8, c7.y, r0",
+            "mov r1, v0",
+            "mad r0, r0, r1, v1",
+            "mov oC1, r0"
+          ],
+          "blob_index": 0,
+          "technique_index": 2,
+          "pass_index": 1,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 1468,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "Tex_Target0",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "bloom_texelA",
+                "register_set": "float4",
+                "register": "c6",
+                "register_index": 6,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": {
+            "version": "0x46580201",
+            "chunks": [
+              {
+                "tag": "CTAB",
+                "bytes": 148,
+                "ctab": {
+                  "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+                  "target": "tx",
+                  "version": "0x46580201",
+                  "flags": 536871168,
+                  "constants": [
+                    {
+                      "name": "bloom_texelA",
+                      "register_set": "float4",
+                      "register": "c0",
+                      "register_index": 0,
+                      "register_count": 1,
+                      "class": "vector",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 2,
+                      "elements": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "tag": "PRSI",
+                "bytes": 44,
+                "prsi_header": [
+                  0,
+                  0,
+                  0,
+                  6
+                ]
+              },
+              {
+                "tag": "CLIT",
+                "bytes": 100,
+                "literals": [
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  4.0,
+                  3.0,
+                  -2.0,
+                  -3.0,
+                  -4.0,
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              {
+                "tag": "FXLC",
+                "bytes": 276,
+                "instruction_count": 6
+              }
+            ]
+          },
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [
+            {
+              "register": "c7",
+              "value": [
+                0.25,
+                0.0,
+                0.0,
+                0.0
+              ]
+            },
+            {
+              "register": "c8",
+              "value": [
+                0.07500000298023224,
+                0.05000000074505806,
+                0.10000000149011612,
+                0.15000000596046448
+              ]
+            }
+          ],
+          "instructions": [
+            "def c7, 0.25, 0, 0, 0",
+            "def c8, 0.075, 0.05, 0.1, 0.15",
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "texld r0, t0, s0",
+            "mov r1, c7.y",
+            "mov oC0, r1",
+            "mov r1, c7.y",
+            "mov oC1, r1",
+            "add r1.xy, t0, c1",
+            "add r2.xy, t0, c0",
+            "add r3.xy, t0, c2",
+            "add r4.xy, t0, c6",
+            "add r5.xy, t0, -c6",
+            "add r6.xy, t0, c3",
+            "add r7.xy, t0, c4",
+            "add r8.xy, t0, c5",
+            "texld r1, r1, s0",
+            "texld r2, r2, s0",
+            "texld r3, r3, s0",
+            "texld r4, r4, s0",
+            "texld r5, r5, s0",
+            "texld r6, r6, s0",
+            "texld r7, r7, s0",
+            "texld r8, r8, s0",
+            "mul r1, r1, c8.x",
+            "mad r1, r2, c8.y, r1",
+            "mad r1, r3, c8.z, r1",
+            "mad r1, r4, c8.w, r1",
+            "mad r0, r0, c7.x, r1",
+            "mad r0, r5, c8.w, r0",
+            "mad r0, r6, c8.z, r0",
+            "mad r0, r7, c8.x, r0",
+            "mad r0, r8, c8.y, r0",
+            "mov r1, v0",
+            "mad r0, r0, r1, v1",
+            "mov oC2, r0"
+          ],
+          "blob_index": 1,
+          "technique_index": 2,
+          "pass_index": 0,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 172,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": []
+          },
+          "preshader": null,
+          "declarations": [],
+          "def_constants": [
+            {
+              "register": "c0",
+              "value": [
+                0.0,
+                0.0,
+                0.0,
+                1.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c0, 0, 0, 0, 1",
+            "mov r0, c0.x",
+            "mov oC0, r0",
+            "mov oC1, c0",
+            "mov oC2, c0"
+          ],
+          "blob_index": 2,
+          "technique_index": 1,
+          "pass_index": 0,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 272,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Empty",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [],
+          "instructions": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "texld r0, t0, s0",
+            "mov r1, v0",
+            "mad r0, r0, r1, v1",
+            "mov oC0, r0",
+            "mov oC1, r0"
+          ],
+          "blob_index": 3,
+          "technique_index": 0,
+          "pass_index": 0,
+          "state_index": 0
+        }
+      ]
+    },
+    {
+      "file": "sh_blur.cfx",
+      "byte_size": 5320,
+      "sha256": "437fceb88d3db3201ba527e906d7e3b8a03371ff3103a8901160f98a45e4fb2d",
+      "header": {
+        "magic": "0xfeff0901",
+        "header_offset": 1776,
+        "param_count": 16,
+        "technique_count": 1,
+        "unk_count": 8,
+        "object_count": 11
+      },
+      "parameters": [
+        {
+          "name": "diffuse_texture",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 1
+          }
+        },
+        {
+          "name": "DiffuseTextureSampler",
+          "semantic": null,
+          "type": "sampler",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 2
+                },
+                "resolved_name": "diffuse_texture"
+              },
+              {
+                "state": "MipFilter",
+                "value": "None"
+              },
+              {
+                "state": "MinFilter",
+                "value": "Linear"
+              },
+              {
+                "state": "MagFilter",
+                "value": "Linear"
+              },
+              {
+                "state": "AddressU",
+                "value": "Clamp"
+              },
+              {
+                "state": "AddressV",
+                "value": "Clamp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "temp_texture0",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 3
+          }
+        },
+        {
+          "name": "Tex_Temp0",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 4
+                },
+                "resolved_name": "temp_texture0"
+              },
+              {
+                "state": "MinFilter",
+                "value": "Linear"
+              },
+              {
+                "state": "MagFilter",
+                "value": "Linear"
+              }
+            ]
+          }
+        },
+        {
+          "name": "temp_texture1",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 5
+          }
+        },
+        {
+          "name": "Tex_Temp1",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 6
+                },
+                "resolved_name": "temp_texture1"
+              },
+              {
+                "state": "MinFilter",
+                "value": "Linear"
+              },
+              {
+                "state": "MagFilter",
+                "value": "Linear"
+              }
+            ]
+          }
+        },
+        {
+          "name": "normal_texture",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 7
+          }
+        },
+        {
+          "name": "Tex_Normal",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 8
+                },
+                "resolved_name": "normal_texture"
+              },
+              {
+                "state": "MinFilter",
+                "value": "Linear"
+              },
+              {
+                "state": "MagFilter",
+                "value": "Linear"
+              }
+            ]
+          }
+        },
+        {
+          "name": "texel_size",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 4,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "fColorHosei",
+          "semantic": null,
+          "type": "float",
+          "class": "scalar",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0
+          ]
+        },
+        {
+          "name": "fPower",
+          "semantic": null,
+          "type": "float",
+          "class": "scalar",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            1.0
+          ]
+        },
+        {
+          "name": "fValue",
+          "semantic": null,
+          "type": "float",
+          "class": "scalar",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            1.0
+          ]
+        },
+        {
+          "name": "diff_centeruv",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.3125,
+            0.46875
+          ]
+        },
+        {
+          "name": "diff_uv",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.3125,
+            0.46875
+          ]
+        },
+        {
+          "name": "diff_wh",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.3125,
+            0.46875
+          ]
+        },
+        {
+          "name": "diff_texel",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0
+          ]
+        }
+      ],
+      "techniques": [
+        {
+          "index": 0,
+          "name": "BgPointBlur",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 9,
+                  "shader_blob_index": 1,
+                  "profile": "ps_2_0"
+                },
+                {
+                  "state": "AlphaBlendEnable",
+                  "state_id": 13,
+                  "value": 1
+                },
+                {
+                  "state": "AlphaTestEnable",
+                  "state_id": 4,
+                  "value": 0
+                },
+                {
+                  "state": "ZEnable",
+                  "state_id": 0,
+                  "value": 0
+                },
+                {
+                  "state": "ZWriteEnable",
+                  "state_id": 3,
+                  "value": 0
+                }
+              ]
+            },
+            {
+              "name": "P1",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 10,
+                  "shader_blob_index": 0,
+                  "profile": "ps_2_0"
+                },
+                {
+                  "state": "AlphaBlendEnable",
+                  "state_id": 13,
+                  "value": 1
+                },
+                {
+                  "state": "AlphaTestEnable",
+                  "state_id": 4,
+                  "value": 0
+                },
+                {
+                  "state": "ZEnable",
+                  "state_id": 0,
+                  "value": 0
+                },
+                {
+                  "state": "ZWriteEnable",
+                  "state_id": 3,
+                  "value": 0
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "string_objects": {
+        "1": "diffuse_texture",
+        "3": "temp_texture0",
+        "5": "temp_texture1",
+        "7": "normal_texture"
+      },
+      "shaders": [
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 1048,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "Tex_Normal",
+                "register_set": "sampler",
+                "register": "s2",
+                "register_index": 2,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "Tex_Temp0",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "Tex_Temp1",
+                "register_set": "sampler",
+                "register": "s1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "diff_centeruv",
+                "register_set": "float4",
+                "register": "c2",
+                "register_index": 2,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_uv",
+                "register_set": "float4",
+                "register": "c3",
+                "register_index": 3,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_wh",
+                "register_set": "float4",
+                "register": "c4",
+                "register_index": 4,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "fPower",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "scalar",
+                "type": "float",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "fValue",
+                "register_set": "float4",
+                "register": "c1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "scalar",
+                "type": "float",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1",
+            "dcl_2d s2"
+          ],
+          "def_constants": [
+            {
+              "register": "c5",
+              "value": [
+                0.0,
+                3.0,
+                0.3333333432674408,
+                0.5
+              ]
+            },
+            {
+              "register": "c6",
+              "value": [
+                1.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c5, 0, 3, 0.333333, 0.5",
+            "def c6, 1, 0, 0, 0",
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1",
+            "dcl_2d s2",
+            "texld r0, t0, s2",
+            "mov r1.xy, c4",
+            "mad r1.xy, t0, r1, c3",
+            "add r2.xy, -r1, c2",
+            "dp2add r0.y, r2, r2, c5.x",
+            "rsq r0.y, r0.y",
+            "mul r0.yz, r0.y, r2.zxyw",
+            "mul r0.yz, r0.x, r0",
+            "mul r0.yz, r0, c0.x",
+            "mad r2.xy, r0.yzxw, c5.y, r1",
+            "texld r1, r1, s1",
+            "texld r2, r2, s0",
+            "mov r3, v0",
+            "mad r2, r2, r3, v1",
+            "add r1.w, r2.y, r2.x",
+            "add r1.w, r2.z, r1.w",
+            "mad r0.yzw, r1.w, c5.z, r2.wzyx",
+            "mad r0.yzw, r0, c5.w, -r2.wzyx",
+            "mad r0.yzw, c1.x, r0, r2.wzyx",
+            "mul r1.w, r0.x, r2.w",
+            "add r0.x, r1.y, r1.x",
+            "add r0.x, r1.z, r0.x",
+            "mad r2.xyz, r0.x, c5.z, r1",
+            "mad r2.xyz, r2, c5.w, -r1",
+            "mad r1.xyz, c1.x, r2, r1",
+            "lrp r2.xyz, r1.w, r0.wzyx, r1",
+            "mov r2.w, c6.x",
+            "mov oC0, r2"
+          ],
+          "blob_index": 0,
+          "technique_index": 0,
+          "pass_index": 1,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 1772,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "DiffuseTextureSampler",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "diff_uv",
+                "register_set": "float4",
+                "register": "c3",
+                "register_index": 3,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_wh",
+                "register_set": "float4",
+                "register": "c4",
+                "register_index": 4,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": {
+            "version": "0x46580201",
+            "chunks": [
+              {
+                "tag": "CTAB",
+                "bytes": 308,
+                "ctab": {
+                  "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+                  "target": "tx",
+                  "version": "0x46580201",
+                  "flags": 536871168,
+                  "constants": [
+                    {
+                      "name": "diff_wh",
+                      "register_set": "float4",
+                      "register": "c3",
+                      "register_index": 3,
+                      "register_count": 1,
+                      "class": "vector",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 2,
+                      "elements": 1
+                    },
+                    {
+                      "name": "fColorHosei",
+                      "register_set": "float4",
+                      "register": "c0",
+                      "register_index": 0,
+                      "register_count": 1,
+                      "class": "scalar",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 1,
+                      "elements": 1
+                    },
+                    {
+                      "name": "fPower",
+                      "register_set": "float4",
+                      "register": "c1",
+                      "register_index": 1,
+                      "register_count": 1,
+                      "class": "scalar",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 1,
+                      "elements": 1
+                    },
+                    {
+                      "name": "fValue",
+                      "register_set": "float4",
+                      "register": "c2",
+                      "register_index": 2,
+                      "register_count": 1,
+                      "class": "scalar",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 1,
+                      "elements": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "tag": "PRSI",
+                "bytes": 44,
+                "prsi_header": [
+                  0,
+                  0,
+                  0,
+                  3
+                ]
+              },
+              {
+                "tag": "CLIT",
+                "bytes": 164,
+                "literals": [
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.5,
+                  0.2,
+                  1.0,
+                  0.0
+                ]
+              },
+              {
+                "tag": "FXLC",
+                "bytes": 188,
+                "instruction_count": 4
+              }
+            ]
+          },
+          "declarations": [
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [
+            {
+              "register": "c5",
+              "value": [
+                0.0,
+                2.0,
+                0.1889999955892563,
+                0.24400000274181366
+              ]
+            },
+            {
+              "register": "c6",
+              "value": [
+                3.0,
+                0.16200000047683716,
+                4.0,
+                0.13500000536441803
+              ]
+            },
+            {
+              "register": "c7",
+              "value": [
+                5.0,
+                0.1080000028014183,
+                6.0,
+                0.08100000023841858
+              ]
+            },
+            {
+              "register": "c8",
+              "value": [
+                7.0,
+                0.05400000140070915,
+                8.0,
+                0.027000000700354576
+              ]
+            }
+          ],
+          "instructions": [
+            "def c5, 0, 2, 0.189, 0.244",
+            "def c6, 3, 0.162, 4, 0.135",
+            "def c7, 5, 0.108, 6, 0.081",
+            "def c8, 7, 0.054, 8, 0.027",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "mov r0, c5.x",
+            "mov oC0, r0",
+            "mov r0.xy, c4",
+            "mad r0.xy, t0, r0, c3",
+            "add r1.xy, -r0, c0",
+            "dp2add r0.z, r1, r1, c5.x",
+            "rsq r0.z, r0.z",
+            "mul r0.zw, r0.z, r1.wzyx",
+            "mad r1.xy, r0.wzyx, c1.x, r0",
+            "mul r0.zw, r0, c1.x",
+            "mad r2.xy, r0.wzyx, c5.y, r0",
+            "mad r3.xy, r0.wzyx, c6.x, r0",
+            "mad r4.xy, r0.wzyx, c6.z, r0",
+            "mad r5.xy, r0.wzyx, c7.x, r0",
+            "mad r6.xy, r0.wzyx, c7.z, r0",
+            "mad r7.xy, r0.wzyx, c8.x, r0",
+            "mad r8.xy, r0.wzyx, c8.z, r0",
+            "texld r1, r1, s0",
+            "texld r2, r2, s0",
+            "texld r3, r3, s0",
+            "texld r4, r4, s0",
+            "texld r5, r5, s0",
+            "texld r6, r6, s0",
+            "texld r0, r0, s0",
+            "texld r8, r8, s0",
+            "texld r7, r7, s0",
+            "mul r2, r2, c5.z",
+            "mad r1, r1, c5.w, r2",
+            "mad r1, r3, c6.y, r1",
+            "mad r1, r4, c6.w, r1",
+            "mad r1, r5, c7.y, r1",
+            "mad r1, r6, c7.w, r1",
+            "mul r0, r0, c2.x",
+            "mov oC2, r0",
+            "mad r0, r7, c8.y, r1",
+            "mad r0, r8, c8.w, r0",
+            "mul r0, r0, c2.x",
+            "mov oC1, r0"
+          ],
+          "blob_index": 1,
+          "technique_index": 0,
+          "pass_index": 0,
+          "state_index": 0
+        }
+      ]
+    },
+    {
+      "file": "sh_chara.cfx",
+      "byte_size": 4428,
+      "sha256": "50afab0b7574df1547a79ad5033498dac4847866cc0bb60549c013f27ea176ec",
+      "header": {
+        "magic": "0xfeff0901",
+        "header_offset": 424,
+        "param_count": 5,
+        "technique_count": 3,
+        "unk_count": 7,
+        "object_count": 4
+      },
+      "parameters": [
+        {
+          "name": "TexSample_Empty",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": []
+          }
+        },
+        {
+          "name": "fTexelX",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "fTexelN",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "fEdgeColor",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 4,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "fRollTexel",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 2,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      ],
+      "techniques": [
+        {
+          "index": 0,
+          "name": "TecCharaDraw",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 1,
+                  "shader_blob_index": 2,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "name": "TecCharaDrawEx",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 2,
+                  "shader_blob_index": 1,
+                  "profile": "ps_3_0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "name": "TecCharaDraw_Edge",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 3,
+                  "shader_blob_index": 0,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "string_objects": {},
+      "shaders": [
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 852,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Empty",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "fEdgeColor",
+                "register_set": "float4",
+                "register": "c1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 4,
+                "elements": 1
+              },
+              {
+                "name": "fTexelX",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [
+            {
+              "register": "c2",
+              "value": [
+                0.0,
+                1.0,
+                2.0,
+                -1.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c2, 0, 1, 2, -1",
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "texld r0, t0, s0",
+            "add r0.x, t0.x, -c0.x",
+            "mov r0.y, t0.y",
+            "add r1.x, t0.x, c0.x",
+            "mov r1.y, t0.y",
+            "add r2.y, t0.y, c0.y",
+            "mov r2.x, t0.x",
+            "add r3.y, t0.y, -c0.y",
+            "mov r3.x, t0.x",
+            "texld r4, r0, s0",
+            "texld r1, r1, s0",
+            "texld r2, r2, s0",
+            "texld r3, r3, s0",
+            "mul r0.x, r4.w, r4.w",
+            "mul r0.y, r1.w, r1.w",
+            "cmp r0.z, -r0.y, c2.x, c2.y",
+            "cmp r0.y, -r0.y, c2.y, c2.z",
+            "cmp r0.x, -r0.x, r0.z, r0.y",
+            "add r0.y, r0.x, c2.y",
+            "mul r0.z, r2.w, r2.w",
+            "cmp r0.x, -r0.z, r0.x, r0.y",
+            "add r0.y, r0.x, c2.y",
+            "mul r0.z, r3.w, r3.w",
+            "cmp r0.x, -r0.z, r0.x, r0.y",
+            "add r0.x, r0.x, c2.w",
+            "mul r0.x, r0.x, r0.x",
+            "mov r1, v0",
+            "mad r1, c1, r1, v1",
+            "cmp r1, -r0.x, r1, c2.x",
+            "mul r0.x, r0.w, r0.w",
+            "cmp r0, -r0.x, r1, c2.x",
+            "mov oC0, r0"
+          ],
+          "blob_index": 0,
+          "technique_index": 2,
+          "pass_index": 0,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_3_0",
+          "version_token": "0xffff0300",
+          "byte_size": 1600,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_3_0",
+            "version": "0xffff0300",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Empty",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "fEdgeColor",
+                "register_set": "float4",
+                "register": "c1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 4,
+                "elements": 1
+              },
+              {
+                "name": "fTexelX",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl_color v0",
+            "dcl_color1 v1",
+            "dcl_texcoord0 v2.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [
+            {
+              "register": "c2",
+              "value": [
+                -4.0,
+                0.20000000298023224,
+                0.0,
+                0.0
+              ]
+            },
+            {
+              "register": "c3",
+              "value": [
+                0.0,
+                1.0,
+                2.0,
+                -1.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c2, -4, 0.2, 0, 0",
+            "def c3, 0, 1, 2, -1",
+            "dcl_color v0",
+            "dcl_color1 v1",
+            "dcl_texcoord0 v2.xy",
+            "dcl_2d s0",
+            "add r0.xy, c0, v2",
+            "mov r0.zw, v2.xyyx",
+            "texld r1, r0.xzzw, s0",
+            "texld r0, r0.wyzw, s0",
+            "add r2.xy, -c0, v2",
+            "mov r2.zw, v2.xyyx",
+            "texld r3, r2.wyzw, s0",
+            "texld r2, r2.xzzw, s0",
+            "add r4, -r1, r3",
+            "dp4 r4.x, r4, r4",
+            "cmp r5, -r4.x, r3, c3.x",
+            "cmp r4.xy, -r4.x, c3.yzzw, c3",
+            "add r6, r1, r5",
+            "add r7, -r0, r1",
+            "dp4 r4.z, r7, r7",
+            "cmp r5, -r4.z, r6, r5",
+            "cmp r4.x, -r4.z, r4.y, r4.x",
+            "add r6, r0, r5",
+            "add r7, r0, -r2",
+            "dp4 r4.y, r7, r7",
+            "cmp r5, -r4.y, r6, r5",
+            "add r6, r2, r5",
+            "add r7, -r3, r2",
+            "dp4 r4.z, r7, r7",
+            "cmp r5, -r4.z, r6, r5",
+            "add r4.w, r4.x, c3.y",
+            "cmp r4.x, -r4.y, r4.w, r4.x",
+            "add r4.y, r4.x, c3.y",
+            "cmp r4.x, -r4.z, r4.y, r4.x",
+            "rcp r4.y, r4.x",
+            "mul r5, r4.y, r5",
+            "add r6, r1, r3",
+            "add r6, r0, r6",
+            "add r6, r2, r6",
+            "texld r7, v2, s0",
+            "add r6, r6, r7",
+            "mul r6, r6, c2.y",
+            "cmp r5, -r4.x, r6, r5",
+            "add r4.x, r4.x, c2.x",
+            "cmp r4, r4.x, r7, r5",
+            "mov r5.xyz, r7",
+            "cmp r6.xy, -abs(r3.w), c3.yzzw, c3",
+            "cmp r6.x, -abs(r1.w), r6.y, r6.x",
+            "add r6.y, r6.x, c3.y",
+            "cmp r6.x, -abs(r0.w), r6.y, r6.x",
+            "add r6.y, r6.x, c3.y",
+            "cmp r6.x, -abs(r2.w), r6.y, r6.x",
+            "add r6.y, -r6.x, c3.y",
+            "rcp r5.w, r6.x",
+            "cmp r4, r6.y, r4, r5",
+            "cmp r5, -abs(r1.w), c3.x, r1",
+            "cmp r1.xy, -abs(r1.w), c3, c3.yzzw",
+            "cmp r1.x, -abs(r2.w), r1.x, r1.y",
+            "add r6, r2, r5",
+            "cmp r2, -abs(r2.w), r5, r6",
+            "add r5, r0, r2",
+            "cmp r2, -abs(r0.w), r2, r5",
+            "add r5, r3, r2",
+            "cmp r2, -abs(r3.w), r2, r5",
+            "add r0.x, r1.x, c3.y",
+            "cmp r0.x, -abs(r0.w), r1.x, r0.x",
+            "add r0.y, r0.x, c3.y",
+            "cmp r0.x, -abs(r3.w), r0.x, r0.y",
+            "rcp r0.y, r0.x",
+            "mul r1.xyz, r0.y, r2",
+            "add r0.y, r0.x, c3.w",
+            "add r0.x, -r0.x, c3.y",
+            "cmp r2, r0.y, c1, r2",
+            "mov r1.w, c3.y",
+            "cmp r0, r0.x, r2, r1",
+            "cmp r0, -abs(r7.w), r0, r4",
+            "mov r1, v0",
+            "mad oC0, r0, r1, v1"
+          ],
+          "blob_index": 1,
+          "technique_index": 1,
+          "pass_index": 0,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 1248,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Empty",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "fEdgeColor",
+                "register_set": "float4",
+                "register": "c1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 4,
+                "elements": 1
+              },
+              {
+                "name": "fTexelX",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [
+            {
+              "register": "c2",
+              "value": [
+                0.0,
+                1.0,
+                2.0,
+                -1.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c2, 0, 1, 2, -1",
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "texld r0, t0, s0",
+            "add r1.y, t0.y, c0.y",
+            "mov r1.x, t0.x",
+            "add r2.x, t0.x, -c0.x",
+            "mov r2.y, t0.y",
+            "add r3.x, t0.x, c0.x",
+            "mov r3.y, t0.y",
+            "add r4.y, t0.y, -c0.y",
+            "mov r4.x, t0.x",
+            "texld r1, r1, s0",
+            "texld r2, r2, s0",
+            "texld r3, r3, s0",
+            "texld r4, r4, s0",
+            "mul r5.w, r3.w, r3.w",
+            "cmp r3, -r5.w, c2.x, r3",
+            "add r6, r2, r3",
+            "mul r2.x, r2.w, r2.w",
+            "cmp r3, -r2.x, r3, r6",
+            "add r6, r1, r3",
+            "mul r1.x, r1.w, r1.w",
+            "cmp r3, -r1.x, r3, r6",
+            "add r6, r4, r3",
+            "mul r1.y, r4.w, r4.w",
+            "cmp r3, -r1.y, r3, r6",
+            "cmp r1.z, -r5.w, c2.x, c2.y",
+            "cmp r1.w, -r5.w, c2.y, c2.z",
+            "cmp r1.z, -r2.x, r1.z, r1.w",
+            "add r1.w, r1.z, c2.y",
+            "cmp r1.z, -r1.x, r1.z, r1.w",
+            "add r1.w, r1.z, c2.y",
+            "cmp r1.z, -r1.y, r1.z, r1.w",
+            "add r1.w, r1.z, c2.w",
+            "mul r1.w, r1.w, r1.w",
+            "cmp r4, -r1.w, c1, r3",
+            "rcp r1.w, r1.z",
+            "add r3.w, -r1.z, c2.y",
+            "mul r6.xyz, r1.w, r3",
+            "mov r6.w, c2.y",
+            "cmp r3, r3.w, r4, r6",
+            "cmp r1.z, -r1.y, c2.y, c2.x",
+            "cmp r1.y, -r1.y, c2.z, c2.y",
+            "cmp r1.y, -r5.w, r1.y, r1.z",
+            "add r1.z, r1.y, c2.y",
+            "cmp r1.x, -r1.x, r1.z, r1.y",
+            "add r1.y, r1.x, c2.y",
+            "cmp r1.x, -r2.x, r1.y, r1.x",
+            "add r1.y, -r1.x, c2.y",
+            "rcp r1.x, r1.x",
+            "cmp r1.w, r1.y, r0.w, r1.x",
+            "mul r0.w, r0.w, r0.w",
+            "mov r1.xyz, r0",
+            "cmp r0, -r0.w, r3, r1",
+            "mov r1, v0",
+            "mad r0, r0, r1, v1",
+            "mov oC0, r0"
+          ],
+          "blob_index": 2,
+          "technique_index": 0,
+          "pass_index": 0,
+          "state_index": 0
+        }
+      ]
+    },
+    {
+      "file": "sh_fade.cfx",
+      "byte_size": 2892,
+      "sha256": "6f584c079ae6e7db8c714ace156021c741b7408d7ff4f2d2fe00cbba720d9d97",
+      "header": {
+        "magic": "0xfeff0901",
+        "header_offset": 320,
+        "param_count": 4,
+        "technique_count": 2,
+        "unk_count": 6,
+        "object_count": 5
+      },
+      "parameters": [
+        {
+          "name": "TexSample_Empty",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": []
+          }
+        },
+        {
+          "name": "tex_Fade",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 1
+          }
+        },
+        {
+          "name": "TexSample_Fade",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 2
+                },
+                "resolved_name": "tex_Fade"
+              }
+            ]
+          }
+        },
+        {
+          "name": "fPower",
+          "semantic": null,
+          "type": "float",
+          "class": "scalar",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0
+          ]
+        }
+      ],
+      "techniques": [
+        {
+          "index": 0,
+          "name": "TecFade_ExFade0",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 3,
+                  "shader_blob_index": 1,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "name": "TecFade_ExFade1",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 4,
+                  "shader_blob_index": 0,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "string_objects": {
+        "2": "tex_Fade"
+      },
+      "shaders": [
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 1152,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Empty",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "TexSample_Fade",
+                "register_set": "sampler",
+                "register": "s1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": {
+            "version": "0x46580201",
+            "chunks": [
+              {
+                "tag": "CTAB",
+                "bytes": 140,
+                "ctab": {
+                  "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+                  "target": "tx",
+                  "version": "0x46580201",
+                  "flags": 536871168,
+                  "constants": [
+                    {
+                      "name": "fPower",
+                      "register_set": "float4",
+                      "register": "c0",
+                      "register_index": 0,
+                      "register_count": 1,
+                      "class": "scalar",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 1,
+                      "elements": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "tag": "PRSI",
+                "bytes": 44,
+                "prsi_header": [
+                  0,
+                  0,
+                  0,
+                  2
+                ]
+              },
+              {
+                "tag": "CLIT",
+                "bytes": 68,
+                "literals": [
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              },
+              {
+                "tag": "FXLC",
+                "bytes": 440,
+                "instruction_count": 10
+              }
+            ]
+          },
+          "declarations": [
+            "dcl v0.xyz",
+            "dcl v1.xyz",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1"
+          ],
+          "def_constants": [
+            {
+              "register": "c2",
+              "value": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c2, 0, 0, 0, 0",
+            "dcl v0.xyz",
+            "dcl v1.xyz",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1",
+            "texld r0, t0, s1",
+            "texld r1, t0, s0",
+            "add r1.w, r0.x, -c0.x",
+            "max r0.x, r1.w, c2.x",
+            "add_sat r0.w, r0.x, c1.x",
+            "mov r2.xyz, v0",
+            "mad r0.xyz, r1, r2, v1",
+            "mov oC0, r0"
+          ],
+          "blob_index": 0,
+          "technique_index": 1,
+          "pass_index": 0,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 1152,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Empty",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "TexSample_Fade",
+                "register_set": "sampler",
+                "register": "s1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": {
+            "version": "0x46580201",
+            "chunks": [
+              {
+                "tag": "CTAB",
+                "bytes": 140,
+                "ctab": {
+                  "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+                  "target": "tx",
+                  "version": "0x46580201",
+                  "flags": 536871168,
+                  "constants": [
+                    {
+                      "name": "fPower",
+                      "register_set": "float4",
+                      "register": "c0",
+                      "register_index": 0,
+                      "register_count": 1,
+                      "class": "scalar",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 1,
+                      "elements": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "tag": "PRSI",
+                "bytes": 44,
+                "prsi_header": [
+                  0,
+                  0,
+                  0,
+                  2
+                ]
+              },
+              {
+                "tag": "CLIT",
+                "bytes": 68,
+                "literals": [
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  1.0,
+                  0.0,
+                  -1.0,
+                  0.0
+                ]
+              },
+              {
+                "tag": "FXLC",
+                "bytes": 440,
+                "instruction_count": 10
+              }
+            ]
+          },
+          "declarations": [
+            "dcl v0.xyz",
+            "dcl v1.xyz",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1"
+          ],
+          "def_constants": [
+            {
+              "register": "c2",
+              "value": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c2, 0, 0, 0, 0",
+            "dcl v0.xyz",
+            "dcl v1.xyz",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1",
+            "texld r0, t0, s1",
+            "texld r1, t0, s0",
+            "add r1.w, r0.x, -c0.x",
+            "max r0.x, r1.w, c2.x",
+            "add_sat r0.w, r0.x, c1.x",
+            "mov r2.xyz, v0",
+            "mad r0.xyz, r1, r2, v1",
+            "mov oC0, r0"
+          ],
+          "blob_index": 1,
+          "technique_index": 0,
+          "pass_index": 0,
+          "state_index": 0
+        }
+      ]
+    },
+    {
+      "file": "sh_gaugedraw.cfx",
+      "byte_size": 1384,
+      "sha256": "c04f73322c728b2befdb97a68a2435d748bd1918c60e28edddea2079ea5b0700",
+      "header": {
+        "magic": "0xfeff0901",
+        "header_offset": 276,
+        "param_count": 5,
+        "technique_count": 1,
+        "unk_count": 3,
+        "object_count": 2
+      },
+      "parameters": [
+        {
+          "name": "TexSample_Empty",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": []
+          }
+        },
+        {
+          "name": "fValue",
+          "semantic": null,
+          "type": "float",
+          "class": "scalar",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0
+          ]
+        },
+        {
+          "name": "fSU",
+          "semantic": null,
+          "type": "float",
+          "class": "scalar",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0
+          ]
+        },
+        {
+          "name": "fWidth",
+          "semantic": null,
+          "type": "float",
+          "class": "scalar",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            1.0
+          ]
+        },
+        {
+          "name": "fColor",
+          "semantic": null,
+          "type": "float",
+          "class": "scalar",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            1.0
+          ]
+        }
+      ],
+      "techniques": [
+        {
+          "index": 0,
+          "name": "TecMagicCircuitDraw",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 1,
+                  "shader_blob_index": 0,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "string_objects": {},
+      "shaders": [
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 932,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Empty",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "fColor",
+                "register_set": "float4",
+                "register": "c2",
+                "register_index": 2,
+                "register_count": 1,
+                "class": "scalar",
+                "type": "float",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "fSU",
+                "register_set": "float4",
+                "register": "c1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "scalar",
+                "type": "float",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "fValue",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "scalar",
+                "type": "float",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": {
+            "version": "0x46580201",
+            "chunks": [
+              {
+                "tag": "CTAB",
+                "bytes": 140,
+                "ctab": {
+                  "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+                  "target": "tx",
+                  "version": "0x46580201",
+                  "flags": 536871168,
+                  "constants": [
+                    {
+                      "name": "fWidth",
+                      "register_set": "float4",
+                      "register": "c0",
+                      "register_index": 0,
+                      "register_count": 1,
+                      "class": "scalar",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 1,
+                      "elements": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "tag": "PRSI",
+                "bytes": 44,
+                "prsi_header": [
+                  3,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "tag": "CLIT",
+                "bytes": 4,
+                "literals": []
+              },
+              {
+                "tag": "FXLC",
+                "bytes": 44,
+                "instruction_count": 1
+              }
+            ]
+          },
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [
+            {
+              "register": "c4",
+              "value": [
+                -0.3499999940395355,
+                -1.0,
+                -0.0,
+                -2.857142925262451
+              ]
+            }
+          ],
+          "instructions": [
+            "def c4, -0.35, -1, -0, -2.85714",
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "texld r0, t0, s0",
+            "add r1.w, t0.x, -c1.x",
+            "mov r1.x, c3.x",
+            "mad r1.x, r1.w, r1.x, -c0.x",
+            "abs r1.x, r1.x",
+            "add r1.y, r1.x, c4.y",
+            "add r1.w, r1.x, c4.x",
+            "abs r1.y, r1.y",
+            "add r1.z, r1.y, c4.x",
+            "cmp r1.z, r1.z, c4.y, c4.z",
+            "cmp r1.x, r1.w, r1.y, r1.x",
+            "cmp r1.y, r1.w, r1.z, c4.z",
+            "mad r1.x, r1.x, c4.w, -c4.y",
+            "mov r2, v0",
+            "mad r0, r0, r2, v1",
+            "lrp r2.xyz, r1.x, c2.x, r0",
+            "cmp r0.xyz, r1.y, r2, r0",
+            "mov oC0, r0"
+          ],
+          "blob_index": 0,
+          "technique_index": 0,
+          "pass_index": 0,
+          "state_index": 0
+        }
+      ]
+    },
+    {
+      "file": "sh_mono.cfx",
+      "byte_size": 9292,
+      "sha256": "069a044d1115bb7d7e83dc2e5fa6a1525060566fa9694f04f7a37c54a6bda43a",
+      "header": {
+        "magic": "0xfeff0901",
+        "header_offset": 1956,
+        "param_count": 21,
+        "technique_count": 5,
+        "unk_count": 19,
+        "object_count": 18
+      },
+      "parameters": [
+        {
+          "name": "TexSample_Empty",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": []
+          }
+        },
+        {
+          "name": "tex_r",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 1
+          }
+        },
+        {
+          "name": "TexSample_Target",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 2
+                },
+                "resolved_name": "tex_r"
+              }
+            ]
+          }
+        },
+        {
+          "name": "diffuse_texture",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 3
+          }
+        },
+        {
+          "name": "DiffuseTextureSampler",
+          "semantic": null,
+          "type": "sampler",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 4
+                },
+                "resolved_name": "diffuse_texture"
+              },
+              {
+                "state": "MinFilter",
+                "value": "Point"
+              },
+              {
+                "state": "MagFilter",
+                "value": "Point"
+              }
+            ]
+          }
+        },
+        {
+          "name": "temp_textureA",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 5
+          }
+        },
+        {
+          "name": "Tex_TempA",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 6
+                },
+                "resolved_name": "temp_textureA"
+              },
+              {
+                "state": "MinFilter",
+                "value": "Linear"
+              },
+              {
+                "state": "MagFilter",
+                "value": "Linear"
+              }
+            ]
+          }
+        },
+        {
+          "name": "temp_textureB",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 7
+          }
+        },
+        {
+          "name": "Tex_TempB",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 8
+                },
+                "resolved_name": "temp_textureB"
+              },
+              {
+                "state": "MinFilter",
+                "value": "Linear"
+              },
+              {
+                "state": "MagFilter",
+                "value": "Linear"
+              }
+            ]
+          }
+        },
+        {
+          "name": "Tex_TempB_Point",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 9
+                },
+                "resolved_name": "temp_textureB"
+              },
+              {
+                "state": "MinFilter",
+                "value": "Point"
+              },
+              {
+                "state": "MagFilter",
+                "value": "Point"
+              }
+            ]
+          }
+        },
+        {
+          "name": "src_texture",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 10
+          }
+        },
+        {
+          "name": "Tex_Src",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 11
+                },
+                "resolved_name": "src_texture"
+              },
+              {
+                "state": "MinFilter",
+                "value": "Point"
+              },
+              {
+                "state": "MagFilter",
+                "value": "Point"
+              }
+            ]
+          }
+        },
+        {
+          "name": "fValue",
+          "semantic": null,
+          "type": "float",
+          "class": "scalar",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            1.0
+          ]
+        },
+        {
+          "name": "fShift",
+          "semantic": null,
+          "type": "float",
+          "class": "scalar",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            1.0
+          ]
+        },
+        {
+          "name": "diff_uv",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.00390625,
+            0.00390625
+          ]
+        },
+        {
+          "name": "diff_wh",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.00390625,
+            0.00390625
+          ]
+        },
+        {
+          "name": "diff_texel",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "src_uv",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.00390625,
+            0.00390625
+          ]
+        },
+        {
+          "name": "src_wh",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.00390625,
+            0.00390625
+          ]
+        },
+        {
+          "name": "src_texel",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "fPower",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 4,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        }
+      ],
+      "techniques": [
+        {
+          "index": 0,
+          "name": "TecBloom_Blt",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 12,
+                  "shader_blob_index": 5,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "name": "TecBloom_Fill",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 13,
+                  "shader_blob_index": 4,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "name": "TecBloom_Make",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 14,
+                  "shader_blob_index": 3,
+                  "profile": "ps_2_0"
+                }
+              ]
+            },
+            {
+              "name": "P1",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 15,
+                  "shader_blob_index": 2,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "name": "TecMono",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 16,
+                  "shader_blob_index": 1,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 4,
+          "name": "TecMonoFill",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 17,
+                  "shader_blob_index": 0,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "string_objects": {
+        "2": "tex_r",
+        "4": "diffuse_texture",
+        "6": "temp_textureA",
+        "8": "temp_textureB",
+        "9": "temp_textureB",
+        "11": "src_texture"
+      },
+      "shaders": [
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 516,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Target",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "fPower",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 4,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [
+            {
+              "register": "c1",
+              "value": [
+                0.3333333432674408,
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c1, 0.333333, 0, 0, 0",
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "texld r0, t0, s0",
+            "mov r1, v0",
+            "mad r0, r0, r1, v1",
+            "add r1.x, r0.y, r0.x",
+            "add r1.x, r0.z, r1.x",
+            "mad r1.y, r1.x, -c1.x, r0.x",
+            "mul r1.z, r1.x, c1.x",
+            "mad r0.x, r1.y, c0.x, r1.z",
+            "mad r1.y, r1.x, -c1.x, r0.y",
+            "mad r1.x, r1.x, -c1.x, r0.z",
+            "mad r0.z, r1.x, c0.z, r1.z",
+            "mad r0.y, r1.y, c0.y, r1.z",
+            "mov oC0, r0"
+          ],
+          "blob_index": 0,
+          "technique_index": 4,
+          "pass_index": 0,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 512,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Empty",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "fPower",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 4,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [
+            {
+              "register": "c1",
+              "value": [
+                0.3333333432674408,
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c1, 0.333333, 0, 0, 0",
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "texld r0, t0, s0",
+            "mov r1, v0",
+            "mad r0, r0, r1, v1",
+            "add r1.x, r0.y, r0.x",
+            "add r1.x, r0.z, r1.x",
+            "mad r1.y, r1.x, -c1.x, r0.x",
+            "mul r1.z, r1.x, c1.x",
+            "mad r0.x, r1.y, c0.x, r1.z",
+            "mad r1.y, r1.x, -c1.x, r0.y",
+            "mad r1.x, r1.x, -c1.x, r0.z",
+            "mad r0.z, r1.x, c0.z, r1.z",
+            "mad r0.y, r1.y, c0.y, r1.z",
+            "mov oC0, r0"
+          ],
+          "blob_index": 1,
+          "technique_index": 3,
+          "pass_index": 0,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 1992,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "Tex_TempA",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "diff_uv",
+                "register_set": "float4",
+                "register": "c4",
+                "register_index": 4,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_wh",
+                "register_set": "float4",
+                "register": "c5",
+                "register_index": 5,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": {
+            "version": "0x46580201",
+            "chunks": [
+              {
+                "tag": "CTAB",
+                "bytes": 308,
+                "ctab": {
+                  "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+                  "target": "tx",
+                  "version": "0x46580201",
+                  "flags": 536871168,
+                  "constants": [
+                    {
+                      "name": "diff_texel",
+                      "register_set": "float4",
+                      "register": "c3",
+                      "register_index": 3,
+                      "register_count": 1,
+                      "class": "vector",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 2,
+                      "elements": 1
+                    },
+                    {
+                      "name": "diff_wh",
+                      "register_set": "float4",
+                      "register": "c2",
+                      "register_index": 2,
+                      "register_count": 1,
+                      "class": "vector",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 2,
+                      "elements": 1
+                    },
+                    {
+                      "name": "fShift",
+                      "register_set": "float4",
+                      "register": "c1",
+                      "register_index": 1,
+                      "register_count": 1,
+                      "class": "scalar",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 1,
+                      "elements": 1
+                    },
+                    {
+                      "name": "fValue",
+                      "register_set": "float4",
+                      "register": "c0",
+                      "register_index": 0,
+                      "register_count": 1,
+                      "class": "scalar",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 1,
+                      "elements": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "tag": "PRSI",
+                "bytes": 52,
+                "prsi_header": [
+                  0,
+                  0,
+                  0,
+                  4
+                ]
+              },
+              {
+                "tag": "CLIT",
+                "bytes": 164,
+                "literals": [
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  3.0,
+                  0.5,
+                  0.0
+                ]
+              },
+              {
+                "tag": "FXLC",
+                "bytes": 328,
+                "instruction_count": 8
+              }
+            ]
+          },
+          "declarations": [
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [
+            {
+              "register": "c6",
+              "value": [
+                0.0,
+                0.1428571492433548,
+                0.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c6, 0, 0.142857, 0, 0",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "mov r0, c6.x",
+            "mov oC0, r0",
+            "mov r0, c6.x",
+            "mov oC1, r0",
+            "mov r0.xy, c5",
+            "mad r0.xy, t0, r0, -c0",
+            "add r0.z, r0.y, c3.x",
+            "max r1.w, r0.z, c6.x",
+            "add r0.z, r0.z, c3.x",
+            "min r2.y, c2.x, r1.w",
+            "mov r2.x, r0.x",
+            "add r1.xy, r2, c4",
+            "max r1.z, r0.y, c6.x",
+            "min r2.y, c2.x, r1.z",
+            "add r0.xy, r2, c4",
+            "max r1.z, r0.z, c6.x",
+            "add r1.w, r0.z, c3.x",
+            "min r2.y, c2.x, r1.z",
+            "mov r3.x, r2.x",
+            "add r2.xy, r2, c4",
+            "max r0.z, r1.w, c6.x",
+            "add r0.w, r1.w, c3.x",
+            "min r3.y, c2.x, r0.z",
+            "mov r4.x, r3.x",
+            "add r3.xy, r3, c4",
+            "max r1.z, r0.w, c6.x",
+            "add r1.w, r0.w, c3.x",
+            "min r4.y, c2.x, r1.z",
+            "mov r5.x, r4.x",
+            "add r4.xy, r4, c4",
+            "max r0.z, r1.w, c6.x",
+            "add r0.w, r1.w, c3.x",
+            "max r1.z, r0.w, c6.x",
+            "min r6.y, c2.x, r1.z",
+            "min r5.y, c2.x, r0.z",
+            "mov r6.x, r5.x",
+            "add r6.xy, r6, c4",
+            "add r5.xy, r5, c4",
+            "texld r1, r1, s0",
+            "texld r0, r0, s0",
+            "texld r2, r2, s0",
+            "texld r3, r3, s0",
+            "texld r4, r4, s0",
+            "texld r6, r6, s0",
+            "texld r5, r5, s0",
+            "add r0, r1, r0",
+            "add r0, r2, r0",
+            "add r0, r3, r0",
+            "add r0, r4, r0",
+            "add r0, r5, r0",
+            "add r0, r6, r0",
+            "mul r0, r0, c6.y",
+            "mov oC2, r0"
+          ],
+          "blob_index": 2,
+          "technique_index": 2,
+          "pass_index": 1,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 2116,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "DiffuseTextureSampler",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "diff_uv",
+                "register_set": "float4",
+                "register": "c4",
+                "register_index": 4,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_wh",
+                "register_set": "float4",
+                "register": "c5",
+                "register_index": 5,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": {
+            "version": "0x46580201",
+            "chunks": [
+              {
+                "tag": "CTAB",
+                "bytes": 308,
+                "ctab": {
+                  "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+                  "target": "tx",
+                  "version": "0x46580201",
+                  "flags": 536871168,
+                  "constants": [
+                    {
+                      "name": "diff_texel",
+                      "register_set": "float4",
+                      "register": "c3",
+                      "register_index": 3,
+                      "register_count": 1,
+                      "class": "vector",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 2,
+                      "elements": 1
+                    },
+                    {
+                      "name": "diff_wh",
+                      "register_set": "float4",
+                      "register": "c2",
+                      "register_index": 2,
+                      "register_count": 1,
+                      "class": "vector",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 2,
+                      "elements": 1
+                    },
+                    {
+                      "name": "fShift",
+                      "register_set": "float4",
+                      "register": "c1",
+                      "register_index": 1,
+                      "register_count": 1,
+                      "class": "scalar",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 1,
+                      "elements": 1
+                    },
+                    {
+                      "name": "fValue",
+                      "register_set": "float4",
+                      "register": "c0",
+                      "register_index": 0,
+                      "register_count": 1,
+                      "class": "scalar",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 1,
+                      "elements": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "tag": "PRSI",
+                "bytes": 52,
+                "prsi_header": [
+                  0,
+                  0,
+                  0,
+                  4
+                ]
+              },
+              {
+                "tag": "CLIT",
+                "bytes": 164,
+                "literals": [
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  3.0,
+                  0.0,
+                  0.5,
+                  0.0
+                ]
+              },
+              {
+                "tag": "FXLC",
+                "bytes": 328,
+                "instruction_count": 8
+              }
+            ]
+          },
+          "declarations": [
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [
+            {
+              "register": "c6",
+              "value": [
+                0.0,
+                0.1428571492433548,
+                0.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c6, 0, 0.142857, 0, 0",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "mov r0, c6.x",
+            "mov oC0, r0",
+            "mov r0.xy, c5",
+            "mad r0.yz, t0.zxyw, r0.zxyw, -c0.zxyw",
+            "add r0.w, r0.y, c3.x",
+            "max r1.w, r0.w, c6.x",
+            "add r0.w, r0.w, c3.x",
+            "min r2.x, c2.x, r1.w",
+            "mov r2.z, r0.z",
+            "add r1.x, r2.x, c4.x",
+            "add r1.y, r2.z, c4.y",
+            "max r1.z, r0.y, c6.x",
+            "min r0.x, c2.x, r1.z",
+            "add r0.x, r0.x, c4.x",
+            "add r0.y, r0.z, c4.y",
+            "max r1.z, r0.w, c6.x",
+            "add r1.w, r0.w, c3.x",
+            "min r2.x, c2.x, r1.z",
+            "mov r3.z, r2.z",
+            "add r2.x, r2.x, c4.x",
+            "add r2.y, r2.z, c4.y",
+            "max r0.z, r1.w, c6.x",
+            "add r0.w, r1.w, c3.x",
+            "min r3.x, c2.x, r0.z",
+            "mov r4.z, r3.z",
+            "add r3.x, r3.x, c4.x",
+            "add r3.y, r3.z, c4.y",
+            "max r1.z, r0.w, c6.x",
+            "add r1.w, r0.w, c3.x",
+            "min r4.x, c2.x, r1.z",
+            "mov r5.z, r4.z",
+            "add r4.x, r4.x, c4.x",
+            "add r4.y, r4.z, c4.y",
+            "max r0.z, r1.w, c6.x",
+            "add r0.w, r1.w, c3.x",
+            "max r1.z, r0.w, c6.x",
+            "min r6.x, c2.x, r1.z",
+            "min r5.x, c2.x, r0.z",
+            "mov r6.z, r5.z",
+            "add r6.x, r6.x, c4.x",
+            "add r6.y, r6.z, c4.y",
+            "add r5.x, r5.x, c4.x",
+            "add r5.y, r5.z, c4.y",
+            "texld r1, r1, s0",
+            "texld r0, r0, s0",
+            "texld r2, r2, s0",
+            "texld r3, r3, s0",
+            "texld r4, r4, s0",
+            "texld r6, r6, s0",
+            "texld r5, r5, s0",
+            "add r0, r1, r0",
+            "add r0, r2, r0",
+            "add r0, r3, r0",
+            "add r0, r4, r0",
+            "add r0, r5, r0",
+            "add r0, r6, r0",
+            "mul r0, r0, c6.y",
+            "mov oC1, r0",
+            "mov r0, c6.x",
+            "mov oC2, r0"
+          ],
+          "blob_index": 3,
+          "technique_index": 2,
+          "pass_index": 0,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 452,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "Tex_TempB_Point",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "diff_uv",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_wh",
+                "register_set": "float4",
+                "register": "c1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [
+            {
+              "register": "c2",
+              "value": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c2, 0, 0, 0, 0",
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "mov r0.xy, c1",
+            "mad r0.xy, t0, r0, c0",
+            "texld r0, r0, s0",
+            "mov r1, v0",
+            "mad r0, r0, r1, v1",
+            "mov oC0, r0",
+            "mov r0, c2.x",
+            "mov oC1, r0",
+            "mov r0, c2.x",
+            "mov oC2, r0"
+          ],
+          "blob_index": 4,
+          "technique_index": 1,
+          "pass_index": 0,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 740,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "Tex_Src",
+                "register_set": "sampler",
+                "register": "s1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "Tex_TempB",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "diff_uv",
+                "register_set": "float4",
+                "register": "c1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_wh",
+                "register_set": "float4",
+                "register": "c2",
+                "register_index": 2,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "fValue",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "scalar",
+                "type": "float",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "src_uv",
+                "register_set": "float4",
+                "register": "c3",
+                "register_index": 3,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "src_wh",
+                "register_set": "float4",
+                "register": "c4",
+                "register_index": 4,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1"
+          ],
+          "def_constants": [
+            {
+              "register": "c5",
+              "value": [
+                0.0,
+                1.0,
+                0.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c5, 0, 1, 0, 0",
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1",
+            "mov r0.xy, c2",
+            "mad r0.xy, t0, r0, c1",
+            "mov r1.xy, c4",
+            "mad r1.xy, t0, r1, c3",
+            "texld r0, r0, s0",
+            "texld r1, r1, s1",
+            "mul r0.w, r1.w, c0.x",
+            "lrp r2.xyz, r0.w, r1, r0",
+            "mul r0.x, r1.w, r1.w",
+            "cmp r2.w, -r0.x, c5.x, c5.y",
+            "mov r0, v0",
+            "mad r0, r2, r0, v1",
+            "mov oC0, r0",
+            "mov r0, c5.x",
+            "mov oC1, r0",
+            "mov r0, c5.x",
+            "mov oC2, r0"
+          ],
+          "blob_index": 5,
+          "technique_index": 0,
+          "pass_index": 0,
+          "state_index": 0
+        }
+      ]
+    },
+    {
+      "file": "sh_noise.cfx",
+      "byte_size": 3224,
+      "sha256": "7955d1a421c66be2140e1402372882a3a443f4f2855d8bb1dc22ac51711f2c6b",
+      "header": {
+        "magic": "0xfeff0901",
+        "header_offset": 1216,
+        "param_count": 13,
+        "technique_count": 1,
+        "unk_count": 7,
+        "object_count": 9
+      },
+      "parameters": [
+        {
+          "name": "diffuse_texture",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 1
+          }
+        },
+        {
+          "name": "DiffuseTextureSampler",
+          "semantic": null,
+          "type": "sampler",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 2
+                },
+                "resolved_name": "diffuse_texture"
+              },
+              {
+                "state": "MipFilter",
+                "value": "None"
+              },
+              {
+                "state": "AddressU",
+                "value": "Clamp"
+              },
+              {
+                "state": "AddressV",
+                "value": "Clamp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "temp_texture",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 3
+          }
+        },
+        {
+          "name": "Tex_Temp",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 4
+                },
+                "resolved_name": "temp_texture"
+              }
+            ]
+          }
+        },
+        {
+          "name": "tex_Noise",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 5
+          }
+        },
+        {
+          "name": "Tex_Noise",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 6
+                },
+                "resolved_name": "tex_Noise"
+              }
+            ]
+          }
+        },
+        {
+          "name": "texel_size",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 4,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "fPower",
+          "semantic": null,
+          "type": "float",
+          "class": "scalar",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            1.0
+          ]
+        },
+        {
+          "name": "fValue",
+          "semantic": null,
+          "type": "float",
+          "class": "scalar",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            1.0
+          ]
+        },
+        {
+          "name": "diff_centeruv",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.3125,
+            0.46875
+          ]
+        },
+        {
+          "name": "diff_uv",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.3125,
+            0.46875
+          ]
+        },
+        {
+          "name": "diff_wh",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.3125,
+            0.46875
+          ]
+        },
+        {
+          "name": "diff_texel",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0
+          ]
+        }
+      ],
+      "techniques": [
+        {
+          "index": 0,
+          "name": "TecNoise",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 7,
+                  "shader_blob_index": 1,
+                  "profile": "ps_2_0"
+                },
+                {
+                  "state": "AlphaBlendEnable",
+                  "state_id": 13,
+                  "value": 1
+                },
+                {
+                  "state": "AlphaTestEnable",
+                  "state_id": 4,
+                  "value": 0
+                },
+                {
+                  "state": "ZEnable",
+                  "state_id": 0,
+                  "value": 0
+                },
+                {
+                  "state": "ZWriteEnable",
+                  "state_id": 3,
+                  "value": 0
+                }
+              ]
+            },
+            {
+              "name": "P1",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 8,
+                  "shader_blob_index": 0,
+                  "profile": "ps_2_0"
+                },
+                {
+                  "state": "AlphaBlendEnable",
+                  "state_id": 13,
+                  "value": 1
+                },
+                {
+                  "state": "AlphaTestEnable",
+                  "state_id": 4,
+                  "value": 0
+                },
+                {
+                  "state": "ZEnable",
+                  "state_id": 0,
+                  "value": 0
+                },
+                {
+                  "state": "ZWriteEnable",
+                  "state_id": 3,
+                  "value": 0
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "string_objects": {
+        "1": "diffuse_texture",
+        "3": "temp_texture",
+        "5": "tex_Noise"
+      },
+      "shaders": [
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 376,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "Tex_Temp",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "diff_uv",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_wh",
+                "register_set": "float4",
+                "register": "c1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [],
+          "instructions": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "mov r0.xy, c1",
+            "mad r0.xy, t0, r0, c0",
+            "texld r0, r0, s0",
+            "mov r1, v0",
+            "mad r0, r0, r1, v1",
+            "mov oC0, r0"
+          ],
+          "blob_index": 0,
+          "technique_index": 0,
+          "pass_index": 1,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 1008,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "DiffuseTextureSampler",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "Tex_Noise",
+                "register_set": "sampler",
+                "register": "s1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "diff_uv",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_wh",
+                "register_set": "float4",
+                "register": "c1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": {
+            "version": "0x46580201",
+            "chunks": [
+              {
+                "tag": "CTAB",
+                "bytes": 244,
+                "ctab": {
+                  "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+                  "target": "tx",
+                  "version": "0x46580201",
+                  "flags": 536871168,
+                  "constants": [
+                    {
+                      "name": "diff_uv",
+                      "register_set": "float4",
+                      "register": "c2",
+                      "register_index": 2,
+                      "register_count": 1,
+                      "class": "vector",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 2,
+                      "elements": 1
+                    },
+                    {
+                      "name": "fPower",
+                      "register_set": "float4",
+                      "register": "c0",
+                      "register_index": 0,
+                      "register_count": 1,
+                      "class": "scalar",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 1,
+                      "elements": 1
+                    },
+                    {
+                      "name": "fValue",
+                      "register_set": "float4",
+                      "register": "c1",
+                      "register_index": 1,
+                      "register_count": 1,
+                      "class": "scalar",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 1,
+                      "elements": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "tag": "PRSI",
+                "bytes": 44,
+                "prsi_header": [
+                  2,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              {
+                "tag": "CLIT",
+                "bytes": 4,
+                "literals": []
+              },
+              {
+                "tag": "FXLC",
+                "bytes": 100,
+                "instruction_count": 2
+              }
+            ]
+          },
+          "declarations": [
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1"
+          ],
+          "def_constants": [
+            {
+              "register": "c3",
+              "value": [
+                0.0,
+                2.0,
+                -1.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c3, 0, 2, -1, 0",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1",
+            "mov r0, c3.x",
+            "mov oC0, r0",
+            "mov r0.x, c3.x",
+            "mov r0.y, t0.y",
+            "texld r0, r0, s1",
+            "mad r0.x, r0.x, c3.y, c3.z",
+            "mov r1.xy, c1",
+            "mad r1.yz, t0.zxyw, r1.zxyw, c0.zxyw",
+            "mad r1.w, r0.x, c2.x, r1.y",
+            "add r0.x, r1.w, -c1.x",
+            "cmp r1.x, r0.x, r0.x, r1.w",
+            "mov r1.y, r1.z",
+            "texld r0, r1, s0",
+            "mov oC1, r0"
+          ],
+          "blob_index": 1,
+          "technique_index": 0,
+          "pass_index": 0,
+          "state_index": 0
+        }
+      ]
+    },
+    {
+      "file": "sh_normal.cfx",
+      "byte_size": 4332,
+      "sha256": "548448ee37c9a3866a67098a0d9b673c1e1f836f6b0e4362f7e8da83fd7df9c3",
+      "header": {
+        "magic": "0xfeff0901",
+        "header_offset": 1116,
+        "param_count": 13,
+        "technique_count": 2,
+        "unk_count": 11,
+        "object_count": 11
+      },
+      "parameters": [
+        {
+          "name": "temp_texture",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 1
+          }
+        },
+        {
+          "name": "Tex_Temp",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 2
+                },
+                "resolved_name": "temp_texture"
+              }
+            ]
+          }
+        },
+        {
+          "name": "normal_texture",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 3
+          }
+        },
+        {
+          "name": "TexSample_Normal",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 4
+                },
+                "resolved_name": "normal_texture"
+              },
+              {
+                "state": "MinFilter",
+                "value": "Linear"
+              },
+              {
+                "state": "MagFilter",
+                "value": "Linear"
+              }
+            ]
+          }
+        },
+        {
+          "name": "normal_texel",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "diffuse_texture",
+          "semantic": null,
+          "type": "texture",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "object_id": 5
+          }
+        },
+        {
+          "name": "TexSample_Diffuse",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": [
+              {
+                "state": "Texture",
+                "value": {
+                  "object_id": 6
+                },
+                "resolved_name": "diffuse_texture"
+              },
+              {
+                "state": "MinFilter",
+                "value": "Linear"
+              },
+              {
+                "state": "MagFilter",
+                "value": "Linear"
+              }
+            ]
+          }
+        },
+        {
+          "name": "diff_texel",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "diff_uv",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "diff_wh",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "diff_size",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "fPower",
+          "semantic": null,
+          "type": "float",
+          "class": "scalar",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0
+          ]
+        },
+        {
+          "name": "diff_texel_matrix",
+          "semantic": null,
+          "type": "float",
+          "class": "matrix_rows",
+          "rows": 2,
+          "columns": 2,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      ],
+      "techniques": [
+        {
+          "index": 0,
+          "name": "TecNormal",
+          "passes": [
+            {
+              "name": "p0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 7,
+                  "shader_blob_index": 3,
+                  "profile": "ps_2_0"
+                }
+              ]
+            },
+            {
+              "name": "p1",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 8,
+                  "shader_blob_index": 2,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "name": "TecNormalAngle",
+          "passes": [
+            {
+              "name": "p0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 9,
+                  "shader_blob_index": 1,
+                  "profile": "ps_2_0"
+                }
+              ]
+            },
+            {
+              "name": "p1",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 10,
+                  "shader_blob_index": 0,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "string_objects": {
+        "1": "temp_texture",
+        "3": "normal_texture",
+        "6": "diffuse_texture"
+      },
+      "shaders": [
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 596,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Normal",
+                "register_set": "sampler",
+                "register": "s1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "Tex_Temp",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "diff_texel_matrix",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 2,
+                "class": "matrix_columns",
+                "type": "float",
+                "rows": 2,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_uv",
+                "register_set": "float4",
+                "register": "c2",
+                "register_index": 2,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1"
+          ],
+          "def_constants": [
+            {
+              "register": "c3",
+              "value": [
+                0.0,
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c3, 0, 0, 0, 0",
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1",
+            "texld r0, t0, s1",
+            "mov r0.x, c3.x",
+            "dp2add r1.x, t0, c0, r0.x",
+            "dp2add r1.y, t0, c1, r0.x",
+            "add r0.xy, r1, c2",
+            "texld r1, r0, s0",
+            "mov r2, v0",
+            "mad r1, r1, r2, v1",
+            "mul r1.w, r0.w, r1.w",
+            "mov oC0, r1"
+          ],
+          "blob_index": 0,
+          "technique_index": 1,
+          "pass_index": 1,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 812,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Diffuse",
+                "register_set": "sampler",
+                "register": "s1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "TexSample_Normal",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "diff_size",
+                "register_set": "float4",
+                "register": "c4",
+                "register_index": 4,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_texel",
+                "register_set": "float4",
+                "register": "c2",
+                "register_index": 2,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_texel_matrix",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 2,
+                "class": "matrix_columns",
+                "type": "float",
+                "rows": 2,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_uv",
+                "register_set": "float4",
+                "register": "c3",
+                "register_index": 3,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "fPower",
+                "register_set": "float4",
+                "register": "c5",
+                "register_index": 5,
+                "register_count": 1,
+                "class": "scalar",
+                "type": "float",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1"
+          ],
+          "def_constants": [
+            {
+              "register": "c6",
+              "value": [
+                2.0,
+                -1.0,
+                1.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c6, 2, -1, 1, 0",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1",
+            "texld r0, t0, s0",
+            "mov r1, c6.w",
+            "mov oC0, r1",
+            "mad r0.xyz, r0, c6.x, c6.y",
+            "dp3 r0.z, r0, r0",
+            "rsq r0.z, r0.z",
+            "mul r0.xy, r0.z, r0",
+            "mul r0.xy, r0, c6.yzxw",
+            "mul r0.xy, r0, c2",
+            "mad r0.xy, r0, c5.x, t0",
+            "mov r0.w, c6.w",
+            "dp2add r1.x, r0, c0, r0.w",
+            "dp2add r1.y, r0, c1, r0.w",
+            "add r0.xy, r1, c3",
+            "max r1.xy, r0, c6.w",
+            "min r0.xy, c4, r1",
+            "texld r0, r0, s1",
+            "mov oC1, r0"
+          ],
+          "blob_index": 1,
+          "technique_index": 1,
+          "pass_index": 0,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 476,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Normal",
+                "register_set": "sampler",
+                "register": "s1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "Tex_Temp",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "diff_uv",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_wh",
+                "register_set": "float4",
+                "register": "c1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1"
+          ],
+          "def_constants": [],
+          "instructions": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1",
+            "texld r0, t0, s1",
+            "mov r0.xy, c1",
+            "mad r0.xy, r0, t0, c0",
+            "texld r1, r0, s0",
+            "mov r2, v0",
+            "mad r1, r1, r2, v1",
+            "mul r1.w, r0.w, r1.w",
+            "mov oC0, r1"
+          ],
+          "blob_index": 2,
+          "technique_index": 0,
+          "pass_index": 1,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 716,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Diffuse",
+                "register_set": "sampler",
+                "register": "s1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "TexSample_Normal",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "diff_size",
+                "register_set": "float4",
+                "register": "c3",
+                "register_index": 3,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_texel",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_uv",
+                "register_set": "float4",
+                "register": "c1",
+                "register_index": 1,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "diff_wh",
+                "register_set": "float4",
+                "register": "c2",
+                "register_index": 2,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              },
+              {
+                "name": "fPower",
+                "register_set": "float4",
+                "register": "c4",
+                "register_index": 4,
+                "register_count": 1,
+                "class": "scalar",
+                "type": "float",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1"
+          ],
+          "def_constants": [
+            {
+              "register": "c5",
+              "value": [
+                2.0,
+                -1.0,
+                1.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c5, 2, -1, 1, 0",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "dcl_2d s1",
+            "texld r0, t0, s0",
+            "mov r1, c5.w",
+            "mov oC0, r1",
+            "mad r0.xyz, r0, c5.x, c5.y",
+            "dp3 r0.z, r0, r0",
+            "rsq r0.z, r0.z",
+            "mul r0.xy, r0.z, r0",
+            "mul r0.xy, r0, c5.yzxw",
+            "mul r0.xy, r0, c0",
+            "mov r1.x, c4.x",
+            "mad r0.xy, r0, r1.x, c1",
+            "mad r0.xy, c2, t0, r0",
+            "max r1.xy, r0, c5.w",
+            "min r0.xy, c3, r1",
+            "texld r0, r0, s1",
+            "mov oC1, r0"
+          ],
+          "blob_index": 3,
+          "technique_index": 0,
+          "pass_index": 0,
+          "state_index": 0
+        }
+      ]
+    },
+    {
+      "file": "vsfx.cfx",
+      "byte_size": 5360,
+      "sha256": "5f8ba6ddadce15eeee5d3a2be825e3fead2c88a643c3029472ee5fab868ac357",
+      "header": {
+        "magic": "0xfeff0901",
+        "header_offset": 1036,
+        "param_count": 7,
+        "technique_count": 4,
+        "unk_count": 11,
+        "object_count": 6
+      },
+      "parameters": [
+        {
+          "name": "worldViewProj",
+          "semantic": "WORLDVIEWPROJECTION",
+          "type": "float",
+          "class": "matrix_rows",
+          "rows": 4,
+          "columns": 4,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "TexSample_Empty",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": []
+          }
+        },
+        {
+          "name": "TexSample_Linear",
+          "semantic": null,
+          "type": "sampler2D",
+          "class": "object",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": {
+            "sampler_states": []
+          }
+        },
+        {
+          "name": "fUVSample",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 1,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            1.0
+          ]
+        },
+        {
+          "name": "g_fTexel",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 0,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "fTexOff",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 2,
+          "columns": 1,
+          "elements": 16,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "fTexWeight",
+          "semantic": null,
+          "type": "float",
+          "class": "vector",
+          "rows": 4,
+          "columns": 1,
+          "elements": 16,
+          "flags": 0,
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ]
+        }
+      ],
+      "techniques": [
+        {
+          "index": 0,
+          "name": "TransformTec",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "VertexShader",
+                  "state_id": 146,
+                  "value": 1,
+                  "shader_blob_index": 4,
+                  "profile": "vs_2_0"
+                },
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 2,
+                  "shader_blob_index": 3,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 1,
+          "name": "TecFilterColorCut",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 3,
+                  "shader_blob_index": 2,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 2,
+          "name": "TecFilter12Sample",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 4,
+                  "shader_blob_index": 1,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "index": 3,
+          "name": "TecBloom",
+          "passes": [
+            {
+              "name": "P0",
+              "states": [
+                {
+                  "state": "PixelShader",
+                  "state_id": 147,
+                  "value": 5,
+                  "shader_blob_index": 0,
+                  "profile": "ps_2_0"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "string_objects": {},
+      "shaders": [
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 1316,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Linear",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "fTexOff",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 15,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 16
+              },
+              {
+                "name": "fTexWeight",
+                "register_set": "float4",
+                "register": "c15",
+                "register_index": 15,
+                "register_count": 15,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 4,
+                "elements": 16
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [],
+          "instructions": [
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "add r0.xy, t0, c1",
+            "add r1.xy, t0, c0",
+            "add r2.xy, t0, c2",
+            "add r3.xy, t0, c3",
+            "add r4.xy, t0, c4",
+            "add r5.xy, t0, c5",
+            "add r6.xy, t0, c6",
+            "add r7.xy, t0, c7",
+            "add r8.xy, t0, c8",
+            "add r9.xy, t0, c9",
+            "add r10.xy, t0, c10",
+            "texld r0, r0, s0",
+            "texld r1, r1, s0",
+            "texld r2, r2, s0",
+            "texld r3, r3, s0",
+            "texld r4, r4, s0",
+            "texld r5, r5, s0",
+            "texld r6, r6, s0",
+            "texld r7, r7, s0",
+            "texld r8, r8, s0",
+            "texld r9, r9, s0",
+            "texld r10, r10, s0",
+            "mul r0, r0, c16",
+            "mad r0, c15, r1, r0",
+            "mad r0, c17, r2, r0",
+            "mad r0, c18, r3, r0",
+            "mad r0, c19, r4, r0",
+            "mad r0, c20, r5, r0",
+            "mad r0, c21, r6, r0",
+            "mad r0, c22, r7, r0",
+            "mad r0, c23, r8, r0",
+            "mad r0, c24, r9, r0",
+            "mad r0, c25, r10, r0",
+            "add r1.xy, t0, c11",
+            "add r2.xy, t0, c12",
+            "add r3.xy, t0, c13",
+            "add r4.xy, t0, c14",
+            "texld r1, r1, s0",
+            "texld r2, r2, s0",
+            "texld r3, r3, s0",
+            "texld r4, r4, s0",
+            "mad r0, c26, r1, r0",
+            "mad r0, c27, r2, r0",
+            "mad r0, c28, r3, r0",
+            "mad r0, c29, r4, r0",
+            "mov oC0, r0"
+          ],
+          "blob_index": 0,
+          "technique_index": 3,
+          "pass_index": 0,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 1560,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Empty",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              },
+              {
+                "name": "g_fTexel",
+                "register_set": "float4",
+                "register": "c4",
+                "register_index": 4,
+                "register_count": 1,
+                "class": "vector",
+                "type": "float",
+                "rows": 1,
+                "columns": 2,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": {
+            "version": "0x46580201",
+            "chunks": [
+              {
+                "tag": "CTAB",
+                "bytes": 144,
+                "ctab": {
+                  "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+                  "target": "tx",
+                  "version": "0x46580201",
+                  "flags": 536871168,
+                  "constants": [
+                    {
+                      "name": "g_fTexel",
+                      "register_set": "float4",
+                      "register": "c0",
+                      "register_index": 0,
+                      "register_count": 1,
+                      "class": "vector",
+                      "type": "float",
+                      "rows": 1,
+                      "columns": 2,
+                      "elements": 1
+                    }
+                  ]
+                }
+              },
+              {
+                "tag": "PRSI",
+                "bytes": 44,
+                "prsi_header": [
+                  0,
+                  0,
+                  0,
+                  4
+                ]
+              },
+              {
+                "tag": "CLIT",
+                "bytes": 68,
+                "literals": [
+                  0.0,
+                  0.0,
+                  0.0,
+                  0.0,
+                  -2.0,
+                  0.0,
+                  0.0,
+                  0.0
+                ]
+              },
+              {
+                "tag": "FXLC",
+                "bytes": 188,
+                "instruction_count": 4
+              }
+            ]
+          },
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [
+            {
+              "register": "c5",
+              "value": [
+                0.0,
+                -1.0,
+                1.0,
+                0.07692307978868484
+              ]
+            }
+          ],
+          "instructions": [
+            "def c5, 0, -1, 1, 0.0769231",
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "texld r0, t0, s0",
+            "add r1.x, t0.x, c4.x",
+            "mov r1.y, t0.y",
+            "mov r2.x, -c4.x",
+            "mov r2.y, c5.x",
+            "add r2.xy, r2, t0",
+            "add r3.x, t0.x, c0.x",
+            "mov r3.y, t0.y",
+            "add r4.x, t0.x, c1.x",
+            "mov r4.y, t0.y",
+            "mov r5.x, t0.x",
+            "add r5.y, t0.y, c4.y",
+            "mov r6.x, t0.x",
+            "add r6.y, t0.y, -c4.y",
+            "mov r7.x, t0.x",
+            "add r7.y, t0.y, c2.x",
+            "mov r8.x, t0.x",
+            "add r8.y, t0.y, c3.x",
+            "add r9.xy, t0, c4",
+            "mov r10.xy, c4",
+            "mad r10.xy, r10, c5.yzxw, t0",
+            "texld r1, r1, s0",
+            "texld r2, r2, s0",
+            "texld r3, r3, s0",
+            "texld r4, r4, s0",
+            "texld r5, r5, s0",
+            "texld r6, r6, s0",
+            "texld r7, r7, s0",
+            "texld r8, r8, s0",
+            "texld r9, r9, s0",
+            "texld r10, r10, s0",
+            "add r0, r0, r1",
+            "add r0, r2, r0",
+            "add r0, r3, r0",
+            "add r0, r4, r0",
+            "add r0, r5, r0",
+            "add r0, r6, r0",
+            "add r0, r7, r0",
+            "add r0, r8, r0",
+            "add r0, r9, r0",
+            "add r0, r10, r0",
+            "add r1.x, t0.x, c4.x",
+            "add r1.y, t0.y, -c4.y",
+            "add r2.xy, t0, -c4",
+            "texld r1, r1, s0",
+            "texld r2, r2, s0",
+            "add r0, r0, r1",
+            "add r0, r2, r0",
+            "mul r0, r0, v0",
+            "mad r0, r0, c5.w, v1",
+            "mov oC0, r0"
+          ],
+          "blob_index": 1,
+          "technique_index": 2,
+          "pass_index": 0,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 380,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Linear",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [
+            {
+              "register": "c0",
+              "value": [
+                0.0,
+                0.0,
+                0.0,
+                255.0
+              ]
+            },
+            {
+              "register": "c1",
+              "value": [
+                -0.5,
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          ],
+          "instructions": [
+            "def c0, 0, 0, 0, 255",
+            "def c1, -0.5, 0, 0, 0",
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "texld r0, t0, s0",
+            "mov r1, v0",
+            "mad r0, r0, r1, v1",
+            "max r1.x, r0.x, r0.y",
+            "max r2.w, r1.x, r0.z",
+            "add r1.x, r2.w, c1.x",
+            "cmp r0, r1.x, r0, c0",
+            "mov oC0, r0"
+          ],
+          "blob_index": 2,
+          "technique_index": 1,
+          "pass_index": 0,
+          "state_index": 0
+        },
+        {
+          "profile": "ps_2_0",
+          "version_token": "0xffff0200",
+          "byte_size": 264,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "ps_2_0",
+            "version": "0xffff0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "TexSample_Linear",
+                "register_set": "sampler",
+                "register": "s0",
+                "register_index": 0,
+                "register_count": 1,
+                "class": "object",
+                "type": "sampler2D",
+                "rows": 1,
+                "columns": 1,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0"
+          ],
+          "def_constants": [],
+          "instructions": [
+            "dcl v0",
+            "dcl v1",
+            "dcl t0.xy",
+            "dcl_2d s0",
+            "texld r0, t0, s0",
+            "mov r1, v0",
+            "mad r0, r0, r1, v1",
+            "mov oC0, r0"
+          ],
+          "blob_index": 3,
+          "technique_index": 0,
+          "pass_index": 0,
+          "state_index": 1
+        },
+        {
+          "profile": "vs_2_0",
+          "version_token": "0xfffe0200",
+          "byte_size": 364,
+          "ctab": {
+            "creator": "Microsoft (R) HLSL Shader Compiler 9.29.952.3111",
+            "target": "vs_2_0",
+            "version": "0xfffe0200",
+            "flags": 536870912,
+            "constants": [
+              {
+                "name": "worldViewProj",
+                "register_set": "float4",
+                "register": "c0",
+                "register_index": 0,
+                "register_count": 4,
+                "class": "matrix_columns",
+                "type": "float",
+                "rows": 4,
+                "columns": 4,
+                "elements": 1
+              }
+            ]
+          },
+          "preshader": null,
+          "declarations": [
+            "dcl_position v0",
+            "dcl_color v1",
+            "dcl_color1 v2",
+            "dcl_texcoord0 v3"
+          ],
+          "def_constants": [],
+          "instructions": [
+            "dcl_position v0",
+            "dcl_color v1",
+            "dcl_color1 v2",
+            "dcl_texcoord0 v3",
+            "dp4 oPos.x, v0, c0",
+            "dp4 oPos.y, v0, c1",
+            "dp4 oPos.z, v0, c2",
+            "dp4 oPos.w, v0, c3",
+            "mov oD0, v1",
+            "mov oD1, v2",
+            "mov oT0.xy, v3"
+          ],
+          "blob_index": 4,
+          "technique_index": 0,
+          "pass_index": 0,
+          "state_index": 0
+        }
+      ]
+    }
+  ]
+}

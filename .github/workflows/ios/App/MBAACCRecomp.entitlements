@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  MBAACC Recompiled runs 100% AOT native ARM64 compiled from lifted C++20.
+	  NO JIT / dynamic-codesigning entitlements are required on iOS 15+.
+	  Standard iOS App Sandbox applies automatically; Files/Finder BYOC access
+	  is enabled in Info.plist via UIFileSharingEnabled + LSSupportsOpeningDocumentsInPlace.
+	-->
+</dict>
+</plist>

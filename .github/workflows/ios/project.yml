@@ -1,0 +1,75 @@
+name: MBAACCRecomp
+options:
+  bundleIdPrefix: com.mbaacc.recomp
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: NO
+    TARGETED_DEVICE_FAMILY: "1,2"
+    CLANG_CXX_LANGUAGE_STANDARD: c++20
+    CLANG_CXX_LIBRARY: libc++
+    CLANG_ENABLE_OBJC_ARC: YES
+    ENABLE_BITCODE: NO
+    MTL_LANGUAGE_REVISION: Metal2.4
+    GCC_OPTIMIZATION_LEVEL: "2"
+    DEAD_CODE_STRIPPING: YES
+
+targets:
+  MBAACCRecomp:
+    type: application
+    platform: iOS
+    deploymentTarget: "15.0"
+    settings:
+      base:
+        PRODUCT_NAME: MBAACC
+        PRODUCT_BUNDLE_IDENTIFIER: com.mbaacc.recomp.ios
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/MBAACCRecomp.entitlements
+        HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/../runtime/include"
+          - "$(PROJECT_DIR)/../build_gen"
+          - "$(PROJECT_DIR)/Shaders"
+        MTL_HEADER_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/Shaders"
+        OTHER_CPLUSPLUSFLAGS:
+          - "$(inherited)"
+          - "-O2"
+          - "-fexceptions"
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-liconv"
+    sources:
+      - path: App
+        excludes:
+          - "Info.plist"
+          - "MBAACCRecomp.entitlements"
+      - path: Shaders/mbaa_shaders.metal
+      - path: Shaders/shader_manifest.h
+      - path: ../runtime/include
+      - path: ../runtime/src
+        includes:
+          - "*.cpp"
+          - "*.mm"
+      - path: ../build_gen
+        includes:
+          - "*.cpp"
+          - "*.h"
+    dependencies:
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+      - sdk: QuartzCore.framework
+      - sdk: GameController.framework
+      - sdk: AVFoundation.framework
+      - sdk: AudioToolbox.framework
+      - sdk: CoreText.framework
+      - sdk: CoreGraphics.framework
+      - sdk: UIKit.framework
+      - sdk: Foundation.framework
+      - sdk: libiconv.tbd
+    scheme: {}
