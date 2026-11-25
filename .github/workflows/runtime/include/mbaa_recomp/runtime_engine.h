@@ -49,6 +49,7 @@ public:
     [[nodiscard]] bool is_running() const noexcept;
     [[nodiscard]] uint64_t frame_count() const noexcept;
     [[nodiscard]] const std::string& last_error() const noexcept;
+    [[nodiscard]] std::string debug_summary() const;
 
     [[nodiscard]] CpuContext& cpu_context() noexcept;
     [[nodiscard]] GuestMemory& guest_memory() noexcept;

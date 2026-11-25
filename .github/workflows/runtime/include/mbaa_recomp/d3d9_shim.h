@@ -186,6 +186,7 @@ public:
     [[nodiscard]] size_t texture_cache_bytes() const noexcept;
     [[nodiscard]] size_t texture_cache_count() const noexcept;
     [[nodiscard]] uint64_t draw_call_count() const noexcept;
+    [[nodiscard]] std::string debug_stats() const;
 
 #ifdef __APPLE__
     struct Impl;
@@ -223,6 +224,7 @@ inline bool D3D9MetalBridge::is_initialized() const noexcept { return false; }
 inline size_t D3D9MetalBridge::texture_cache_bytes() const noexcept { return 0; }
 inline size_t D3D9MetalBridge::texture_cache_count() const noexcept { return 0; }
 inline uint64_t D3D9MetalBridge::draw_call_count() const noexcept { return 0; }
+inline std::string D3D9MetalBridge::debug_stats() const { return "non-apple"; }
 #endif // !__APPLE__
 
 } // namespace mbaa_recomp

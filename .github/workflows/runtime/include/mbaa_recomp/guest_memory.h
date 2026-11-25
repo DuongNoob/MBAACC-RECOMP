@@ -116,6 +116,8 @@ public:
 
     /// Allocates a 256 KiB stack for a spawned guest worker thread and returns its initial ESP.
     uint32_t alloc_thread_stack();
+    /// Recycles or frees a worker thread stack previously returned by `alloc_thread_stack()`.
+    void free_thread_stack(uint32_t initial_esp);
 
     [[nodiscard]] uint32_t heap_used_bytes() const noexcept;
     [[nodiscard]] const std::vector<PeSectionInfo>& loaded_sections() const noexcept { return sections_; }
@@ -136,6 +138,7 @@ private:
     uint32_t thread_stack_cursor_= kThreadStackBase;
     std::unordered_map<uint32_t, uint32_t> active_allocs_;
     std::vector<AllocBlock> free_blocks_;
+    std::vector<uint32_t> free_thread_stacks_;
 
     std::vector<PeSectionInfo> sections_;
     std::string last_error_;

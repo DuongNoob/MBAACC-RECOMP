@@ -43,6 +43,12 @@ void hle_win32_register_d3d_handler(D3DIatHandlerFn fn);
 /// Signals a synthetic Win32 Event handle (used by DirectSoundNotify and thread sync).
 void hle_win32_signal_event(uint32_t handle_val);
 
+/// Writes a diagnostic log line to stderr, the in-memory ring buffer, and `<assets_dir>/mbaa_debug.log`.
+void hle_win32_log(const char* fmt, ...);
+
+/// Returns up to `max_lines` most recent diagnostic log lines joined with newlines.
+[[nodiscard]] std::string hle_win32_recent_logs(size_t max_lines = 14);
+
 /// DirectShow COM CoCreateInstance helper (implemented in hle_dshow.cpp).
 bool hle_dshow_try_cocreate(
     GuestMemory& mem,
