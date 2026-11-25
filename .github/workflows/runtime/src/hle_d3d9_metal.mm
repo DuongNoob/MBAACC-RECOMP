@@ -127,6 +127,8 @@ constexpr uint32_t kPtTriangleFan   = 6u;
 // ---------------------------------------------------------------------------
 // Host Backing Structs
 // ---------------------------------------------------------------------------
+using MtlTextureRef = id<MTLTexture>;
+
 struct TextureRecord {
     uint32_t id              = 0;
     uint32_t guest_va        = 0;
@@ -145,7 +147,7 @@ struct TextureRecord {
     uint64_t last_used_tick  = 0;
     size_t   gpu_bytes       = 0;
 
-    id<MTLTexture> mtl_tex   = nil;
+    MtlTextureRef mtl_tex    = nil;
     uint32_t staging_va      = 0;
     uint32_t staging_pitch   = 0;
     uint32_t staging_bytes   = 0;
@@ -163,7 +165,7 @@ struct SurfaceRecord {
     uint32_t format         = kFmtA8R8G8B8;
     uint32_t usage          = 0;
     uint32_t ref_count      = 1;
-    id<MTLTexture> mtl_tex  = nil;
+    MtlTextureRef mtl_tex   = nil;
     uint32_t staging_va     = 0;
     uint32_t staging_pitch  = 0;
     uint32_t staging_bytes  = 0;
@@ -1476,9 +1478,13 @@ struct D3D9MetalBridge::Impl {
 // ---------------------------------------------------------------------------
 namespace {
 
+inline std::atomic<D3D9MetalBridge::Impl*>& global_impl_slot() noexcept {
+    static std::atomic<D3D9MetalBridge::Impl*> s_impl{nullptr};
+    return s_impl;
+}
+
 inline D3D9MetalBridge::Impl* active_impl() noexcept {
-    D3D9MetalBridge* b = D3D9MetalBridge::active();
-    return b ? b->impl_.get() : nullptr;
+    return global_impl_slot().load(std::memory_order_acquire);
 }
 
 template <uint32_t TotalArgBytes, uint32_t ReturnValue = kS_OK>
@@ -3260,6 +3266,7 @@ D3D9MetalBridge::~D3D9MetalBridge() { shutdown(); }
 
 void D3D9MetalBridge::set_active(D3D9MetalBridge* bridge) noexcept {
     global_bridge_slot().store(bridge, std::memory_order_release);
+    global_impl_slot().store(bridge ? bridge->impl_.get() : nullptr, std::memory_order_release);
 }
 
 D3D9MetalBridge* D3D9MetalBridge::active() noexcept {
