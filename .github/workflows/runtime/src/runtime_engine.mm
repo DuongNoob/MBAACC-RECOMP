@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <condition_variable>
 #include <cstdio>
 #include <filesystem>
@@ -104,6 +105,7 @@ struct RuntimeEngine::Impl {
     std::condition_variable guest_cv;
     StepPhase phase = StepPhase::Idle;
     bool stop_requested = false;
+    bool frame_in_flight = false;
     bool guest_boot_ok = false;
 
     D3D9MetalBridge d3d_bridge;
@@ -224,6 +226,7 @@ bool RuntimeEngine::init(const std::string& assets_dir, void* metal_layer, int w
         std::lock_guard<std::mutex> lock(impl_->sync_mtx);
         impl_->phase = Impl::StepPhase::WaitGuestYield;
         impl_->stop_requested = false;
+        impl_->frame_in_flight = false;
     }
 
     impl_->initialized.store(true, std::memory_order_release);
@@ -286,50 +289,68 @@ void RuntimeEngine::step_frame() {
     input_poll_platform();
     audio_update_streams();
 
+    Impl* impl_ptr = impl_.get();
+    auto guest_done = [impl_ptr]() {
+        return impl_ptr->phase == Impl::StepPhase::GuestYielded ||
+               impl_ptr->phase == Impl::StepPhase::GuestExited;
+    };
+    auto finish_frame = [this]() {
+        if (impl_->d3d_initialized) {
+            impl_->d3d_bridge.end_frame_and_present();
+        }
+        const uint64_t fno = impl_->frame_count.fetch_add(1u, std::memory_order_relaxed) + 1u;
+        if (fno == 1u || fno == 60u || fno == 300u) {
+            hle_win32_log("Frame %llu | active=%u | %s",
+                          static_cast<unsigned long long>(fno),
+                          static_cast<unsigned>(impl_->mem.r8(0x0076e650u)),
+                          impl_->d3d_bridge.debug_stats().c_str());
+        }
+    };
+
+    {
+        std::unique_lock<std::mutex> lock(impl_->sync_mtx);
+        if (impl_->frame_in_flight) {
+            if (!impl_->host_cv.wait_for(lock, std::chrono::milliseconds(16), guest_done)) {
+                return;
+            }
+            impl_->frame_in_flight = false;
+            if (impl_->phase == Impl::StepPhase::GuestExited) {
+                impl_->running.store(false, std::memory_order_release);
+            }
+            lock.unlock();
+            finish_frame();
+            return;
+        }
+
+        if (!impl_->host_cv.wait_for(lock, std::chrono::milliseconds(16), guest_done)) {
+            return;
+        }
+        if (impl_->phase == Impl::StepPhase::GuestExited) {
+            impl_->running.store(false, std::memory_order_release);
+            return;
+        }
+    }
+
     if (impl_->d3d_initialized) {
         impl_->d3d_bridge.begin_frame();
     }
 
-    Impl* impl_ptr = impl_.get();
     {
         std::unique_lock<std::mutex> lock(impl_->sync_mtx);
-        impl_->host_cv.wait(lock, [impl_ptr]() {
-            return impl_ptr->phase == Impl::StepPhase::GuestYielded ||
-                   impl_ptr->phase == Impl::StepPhase::GuestExited;
-        });
-
-        if (impl_->phase == Impl::StepPhase::GuestExited) {
-            impl_->running.store(false, std::memory_order_release);
-            if (impl_->d3d_initialized) {
-                impl_->d3d_bridge.end_frame_and_present();
-            }
-            return;
-        }
-
+        impl_->frame_in_flight = true;
         impl_->phase = Impl::StepPhase::StepRequested;
         impl_->guest_cv.notify_one();
 
-        impl_->host_cv.wait(lock, [impl_ptr]() {
-            return impl_ptr->phase == Impl::StepPhase::GuestYielded ||
-                   impl_ptr->phase == Impl::StepPhase::GuestExited;
-        });
-
+        if (!impl_->host_cv.wait_for(lock, std::chrono::milliseconds(100), guest_done)) {
+            return;
+        }
+        impl_->frame_in_flight = false;
         if (impl_->phase == Impl::StepPhase::GuestExited) {
             impl_->running.store(false, std::memory_order_release);
         }
     }
 
-    if (impl_->d3d_initialized) {
-        impl_->d3d_bridge.end_frame_and_present();
-    }
-
-    const uint64_t fno = impl_->frame_count.fetch_add(1u, std::memory_order_relaxed) + 1u;
-    if (fno == 1u || fno == 60u || fno == 300u) {
-        hle_win32_log("Frame %llu | active=%u | %s",
-                      static_cast<unsigned long long>(fno),
-                      static_cast<unsigned>(impl_->mem.r8(0x0076e650u)),
-                      impl_->d3d_bridge.debug_stats().c_str());
-    }
+    finish_frame();
 }
 
 void RuntimeEngine::set_touch_state(const TouchInputState& state) {
@@ -363,6 +384,7 @@ void RuntimeEngine::shutdown() {
             std::lock_guard<std::mutex> lock(impl_->sync_mtx);
             impl_->phase = Impl::StepPhase::Idle;
             impl_->stop_requested = false;
+            impl_->frame_in_flight = false;
         }
 
         audio_shutdown();
