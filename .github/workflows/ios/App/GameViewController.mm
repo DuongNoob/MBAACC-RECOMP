@@ -18,6 +18,8 @@
 @property (nonatomic, strong) UIView* onboardingView;
 @property (nonatomic, strong) UILabel* onboardingStatusLabel;
 @property (nonatomic, strong) UIView* pauseOverlayView;
+@property (nonatomic, strong) UITextView* pauseDebugTextView;
+@property (nonatomic, strong) UIButton* copyDebugButton;
 
 @property (nonatomic, assign) BOOL assetsReady;
 @property (nonatomic, assign) BOOL engineStarted;
@@ -332,19 +334,19 @@
 
     UIStackView* card = [[UIStackView alloc] init];
     card.axis = UILayoutConstraintAxisVertical;
-    card.spacing = 12.0;
+    card.spacing = 8.0;
     card.alignment = UIStackViewAlignmentFill;
     card.translatesAutoresizingMaskIntoConstraints = NO;
     card.backgroundColor = [UIColor colorWithWhite:0.12 alpha:0.95];
     card.layer.cornerRadius = 14.0;
-    card.layoutMargins = UIEdgeInsetsMake(18, 24, 18, 24);
+    card.layoutMargins = UIEdgeInsetsMake(14, 18, 14, 18);
     card.layoutMarginsRelativeArrangement = YES;
     [_pauseOverlayView addSubview:card];
 
     [NSLayoutConstraint activateConstraints:@[
         [card.centerXAnchor constraintEqualToAnchor:_pauseOverlayView.centerXAnchor],
         [card.centerYAnchor constraintEqualToAnchor:_pauseOverlayView.centerYAnchor],
-        [card.widthAnchor constraintEqualToConstant:260.0],
+        [card.widthAnchor constraintEqualToConstant:460.0],
     ]];
 
     UILabel* label = [[UILabel alloc] init];
@@ -354,16 +356,39 @@
     label.font = [UIFont systemFontOfSize:16.0 weight:UIFontWeightBold];
     [card addArrangedSubview:label];
 
+    _pauseDebugTextView = [[UITextView alloc] init];
+    _pauseDebugTextView.editable = NO;
+    _pauseDebugTextView.selectable = YES;
+    _pauseDebugTextView.font = [UIFont monospacedSystemFontOfSize:10.5 weight:UIFontWeightRegular];
+    _pauseDebugTextView.textColor = [UIColor colorWithRed:0.76 green:0.94 blue:1.0 alpha:1.0];
+    _pauseDebugTextView.backgroundColor = [UIColor colorWithWhite:0.06 alpha:1.0];
+    _pauseDebugTextView.layer.cornerRadius = 8.0;
+    _pauseDebugTextView.textContainerInset = UIEdgeInsetsMake(6, 6, 6, 6);
+    _pauseDebugTextView.text = @"Waiting for RuntimeEngine telemetry...";
+    [_pauseDebugTextView.heightAnchor constraintEqualToConstant:125.0].active = YES;
+    [card addArrangedSubview:_pauseDebugTextView];
+
     UIButton* resumeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     UIButtonConfiguration* resumeCfg = [UIButtonConfiguration filledButtonConfiguration];
     resumeCfg.title = @"Resume / Tiếp tục";
     resumeCfg.baseBackgroundColor = [UIColor colorWithRed:0.18 green:0.55 blue:0.92 alpha:1.0];
     resumeCfg.baseForegroundColor = [UIColor whiteColor];
     resumeCfg.cornerStyle = UIButtonConfigurationCornerStyleMedium;
-    resumeCfg.contentInsets = NSDirectionalEdgeInsetsMake(10, 14, 10, 14);
+    resumeCfg.contentInsets = NSDirectionalEdgeInsetsMake(8, 14, 8, 14);
     resumeBtn.configuration = resumeCfg;
     [resumeBtn addTarget:self action:@selector(onResumeTapped) forControlEvents:UIControlEventTouchUpInside];
     [card addArrangedSubview:resumeBtn];
+
+    _copyDebugButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    UIButtonConfiguration* copyCfg = [UIButtonConfiguration filledButtonConfiguration];
+    copyCfg.title = @"Copy Debug Log / Chép Log";
+    copyCfg.baseBackgroundColor = [UIColor colorWithRed:0.16 green:0.46 blue:0.32 alpha:1.0];
+    copyCfg.baseForegroundColor = [UIColor whiteColor];
+    copyCfg.cornerStyle = UIButtonConfigurationCornerStyleMedium;
+    copyCfg.contentInsets = NSDirectionalEdgeInsetsMake(8, 14, 8, 14);
+    _copyDebugButton.configuration = copyCfg;
+    [_copyDebugButton addTarget:self action:@selector(onCopyDebugLogTapped) forControlEvents:UIControlEventTouchUpInside];
+    [card addArrangedSubview:_copyDebugButton];
 
     UIButton* trimBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     UIButtonConfiguration* trimCfg = [UIButtonConfiguration filledButtonConfiguration];
@@ -371,12 +396,38 @@
     trimCfg.baseBackgroundColor = [UIColor colorWithWhite:0.22 alpha:1.0];
     trimCfg.baseForegroundColor = [UIColor whiteColor];
     trimCfg.cornerStyle = UIButtonConfigurationCornerStyleMedium;
-    trimCfg.contentInsets = NSDirectionalEdgeInsetsMake(10, 14, 10, 14);
+    trimCfg.contentInsets = NSDirectionalEdgeInsetsMake(8, 14, 8, 14);
     trimBtn.configuration = trimCfg;
     [trimBtn addTarget:self action:@selector(onTrimMemoryTapped) forControlEvents:UIControlEventTouchUpInside];
     [card addArrangedSubview:trimBtn];
 
     [self.view addSubview:_pauseOverlayView];
+}
+
+- (void)refreshPauseDebugSummary {
+    if (_engine && _engineStarted) {
+        std::string summary = _engine->debug_summary();
+        NSString* text = [NSString stringWithUTF8String:summary.c_str()];
+        _pauseDebugTextView.text = text ?: @"(unable to decode debug summary)";
+    } else {
+        _pauseDebugTextView.text = @"RuntimeEngine is not started yet.";
+    }
+}
+
+- (void)onCopyDebugLogTapped {
+    [self refreshPauseDebugSummary];
+    [UIPasteboard generalPasteboard].string = _pauseDebugTextView.text ?: @"";
+    UIButtonConfiguration* cfg = _copyDebugButton.configuration;
+    cfg.title = @"Copied! / Đã chép";
+    _copyDebugButton.configuration = cfg;
+    __weak GameViewController* weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        GameViewController* strongSelf = weakSelf;
+        if (!strongSelf) return;
+        UIButtonConfiguration* restore = strongSelf.copyDebugButton.configuration;
+        restore.title = @"Copy Debug Log / Chép Log";
+        strongSelf.copyDebugButton.configuration = restore;
+    });
 }
 
 - (void)onResumeTapped {
@@ -388,6 +439,7 @@
 - (void)onTrimMemoryTapped {
     if (_engine && _engineStarted) {
         _engine->handle_memory_warning();
+        [self refreshPauseDebugSummary];
     }
 }
 
@@ -478,6 +530,9 @@
 - (void)touchOverlayViewDidTogglePause:(TouchOverlayView*)overlay {
     (void)overlay;
     _pausedByUser = !_pausedByUser;
+    if (_pausedByUser) {
+        [self refreshPauseDebugSummary];
+    }
     _pauseOverlayView.hidden = !_pausedByUser;
     self.metalView.paused = (_pausedBySystem || _pausedByUser || !_assetsReady);
 }
