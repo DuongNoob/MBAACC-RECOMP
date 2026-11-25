@@ -27,11 +27,37 @@ jobs:
       - name: Checkout private repository
         uses: actions/checkout@v4
 
+      - name: Detect project root (handles nested mbaacc-recomp-ios/ upload)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROJECT_YML=""
+          for candidate in "./ios/project.yml" "./mbaacc-recomp-ios/ios/project.yml"; do
+            if [[ -f "${candidate}" ]]; then
+              PROJECT_YML="${candidate}"
+              break
+            fi
+          done
+          if [[ -z "${PROJECT_YML}" ]]; then
+            PROJECT_YML="$(find . -maxdepth 3 -path '*/ios/project.yml' -type f | head -n 1 || true)"
+          fi
+          if [[ -z "${PROJECT_YML}" ]]; then
+            echo "ERROR: Could not find ios/project.yml inside repository workspace." >&2
+            echo "Current repository tree (depth 3):" >&2
+            find . -maxdepth 3 -not -path './.git*' | sort >&2
+            echo "Please ensure ios/, runtime/, build_gen/, and recompiler/ are uploaded to your repo." >&2
+            exit 1
+          fi
+          PROJECT_ROOT="$(cd "$(dirname "${PROJECT_YML}")/.." && pwd)"
+          echo "Detected PROJECT_ROOT=${PROJECT_ROOT}"
+          echo "PROJECT_ROOT=${PROJECT_ROOT}" >> "${GITHUB_ENV}"
+
       - name: Fetch optional build_gen.zip
         if: ${{ inputs.build_gen_zip_url != '' }}
         shell: bash
         run: |
           set -euo pipefail
+          cd "${PROJECT_ROOT}"
           rm -rf build_gen build_gen_tmp
           mkdir -p build_gen build_gen_tmp
           curl -fsSL "${{ inputs.build_gen_zip_url }}" -o build_gen.zip
@@ -63,10 +89,77 @@ jobs:
       - name: Build unsigned arm64 IPA
         shell: bash
         run: |
-          set -o pipefail
-          mkdir -p dist
-          chmod +x ios/build_unsigned_ipa.sh
-          BUILD_CONFIG="${{ inputs.configuration }}" bash ios/build_unsigned_ipa.sh 2>&1 | tee dist/xcodebuild.log
+          set -euo pipefail
+          mkdir -p "${{ github.workspace }}/dist"
+          LOG_FILE="${{ github.workspace }}/dist/xcodebuild.log"
+          OUT_IPA="${{ github.workspace }}/dist/MBAACC-unsigned.ipa"
+          BUILD_CONFIG="${{ inputs.configuration }}"
+
+          if [[ -f "${PROJECT_ROOT}/ios/build_unsigned_ipa.sh" ]]; then
+            chmod +x "${PROJECT_ROOT}/ios/build_unsigned_ipa.sh"
+            OUT_DIR="${{ github.workspace }}/dist" \
+            OUT_IPA="${OUT_IPA}" \
+            BUILD_CONFIG="${BUILD_CONFIG}" \
+              bash "${PROJECT_ROOT}/ios/build_unsigned_ipa.sh" 2>&1 | tee "${LOG_FILE}"
+          else
+            (
+              set -euo pipefail
+              echo ">>> ios/build_unsigned_ipa.sh not found; using inline fallback builder..."
+              IOS_DIR="${PROJECT_ROOT}/ios"
+              DERIVED_DATA="${PROJECT_ROOT}/build-ios-derived"
+              BUILD_GEN_DIR="${PROJECT_ROOT}/build_gen"
+
+              for fname in \
+                recomp_funcs.h iat_table.h \
+                gen_core.cpp gen_filepac.cpp gen_dxtools.cpp gen_scene.cpp \
+                gen_game_engine.cpp gen_chara.cpp gen_menu.cpp gen_replay.cpp \
+                gen_input.cpp gen_sound.cpp gen_netvs.cpp gen_dispatch.cpp; do
+                if [[ ! -s "${BUILD_GEN_DIR}/${fname}" ]]; then
+                  echo "ERROR: Missing build_gen/${fname}" >&2
+                  exit 1
+                fi
+              done
+
+              cd "${IOS_DIR}"
+              rm -rf MBAACCRecomp.xcodeproj
+              xcodegen generate --spec project.yml
+
+              XCODE_SELECTOR=(-target MBAACCRecomp)
+              if [[ -d "${IOS_DIR}/MBAACCRecomp.xcodeproj/xcshareddata/xcschemes" ]] && \
+                 ls "${IOS_DIR}/MBAACCRecomp.xcodeproj/xcshareddata/xcschemes/"*.xcscheme >/dev/null 2>&1; then
+                XCODE_SELECTOR=(-scheme MBAACCRecomp)
+              fi
+
+              rm -rf "${DERIVED_DATA}"
+              xcodebuild \
+                -project "${IOS_DIR}/MBAACCRecomp.xcodeproj" \
+                "${XCODE_SELECTOR[@]}" \
+                -configuration "${BUILD_CONFIG}" \
+                -sdk iphoneos \
+                -arch arm64 \
+                -derivedDataPath "${DERIVED_DATA}" \
+                CODE_SIGNING_ALLOWED=NO \
+                CODE_SIGNING_REQUIRED=NO \
+                CODE_SIGN_IDENTITY="" \
+                DEVELOPMENT_TEAM="" \
+                AD_HOC_CODE_SIGNING_ALLOWED=NO \
+                build
+
+              APP_PATH="${DERIVED_DATA}/Build/Products/${BUILD_CONFIG}-iphoneos/MBAACC.app"
+              [[ -d "${APP_PATH}" && -f "${APP_PATH}/MBAACC" && -f "${APP_PATH}/default.metallib" ]]
+
+              WORK_DIR="$(mktemp -d)"
+              trap 'rm -rf "${WORK_DIR}"' EXIT
+              mkdir -p "${WORK_DIR}/Payload"
+              ditto "${APP_PATH}" "${WORK_DIR}/Payload/MBAACC.app"
+              rm -rf "${WORK_DIR}/Payload/MBAACC.app/_CodeSignature" \
+                     "${WORK_DIR}/Payload/MBAACC.app/embedded.mobileprovision"
+              rm -f "${OUT_IPA}"
+              cd "${WORK_DIR}" && zip -r -y -q "${OUT_IPA}" Payload
+              ls -lh "${OUT_IPA}"
+              shasum -a 256 "${OUT_IPA}"
+            ) 2>&1 | tee "${LOG_FILE}"
+          fi
 
       - name: Upload xcodebuild log (always)
         if: always()
