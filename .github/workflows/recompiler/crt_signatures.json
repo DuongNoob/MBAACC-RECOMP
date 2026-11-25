@@ -1,0 +1,2673 @@
+{
+  "schema_version": 1,
+  "artifact": {
+    "path": "c:\\Users\\A\\Desktop\\AI\\google\\MBAACC\\MBAA.exe",
+    "sha256": "6d1415ca9573100e86a779ac2f81e9bedd322664e3daeae0229a67d13720310a",
+    "crt_start_va": "0x004e00d0"
+  },
+  "calling_contract": {
+    "entry_stack": "[esp+0] holds 32-bit return address pushed by caller; [esp+4] is first stack arg.",
+    "exit_stack": "Each hle_crt_00XXXXXX MUST pop the 4-byte return address (ctx.ret_cdecl(mem)) plus `stack_cleanup` bytes (ctx.ret_stdcall(mem, stack_cleanup)), EXCEPT custom_stack (__EH_prolog3 / __chkstk).",
+    "dispatch_signature": "void hle_crt_00XXXXXX(CpuContext& ctx, GuestMemory& mem);"
+  },
+  "count": 76,
+  "functions": [
+    {
+      "va": "0x004e00d0",
+      "va_int": 5112016,
+      "c_symbol": "hle_crt_004e00d0",
+      "name": "free",
+      "signature": "void __cdecl free(void* ptr)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:ptr:u32"
+      ],
+      "returns": "void",
+      "category": "memory",
+      "game_call_sites": 523,
+      "sample_call_sites": [
+        "0x00401318",
+        "0x004016f4",
+        "0x00401c0e",
+        "0x00401dac",
+        "0x00401e9c"
+      ],
+      "disasm_head": [
+        "0x004e00d0: push 0xc",
+        "0x004e00d2: push 0x543490",
+        "0x004e00d7: call 0x4e4fbc",
+        "0x004e00dc: mov esi, dword ptr [ebp + 8]",
+        "0x004e00df: test esi, esi",
+        "0x004e00e1: je 0x4e0158",
+        "0x004e00e3: cmp dword ptr [0x7b1d60], 3",
+        "0x004e00ea: jne 0x4e012f",
+        "0x004e00ec: push 4",
+        "0x004e00ee: call 0x4e448a"
+      ],
+      "notes": "Frees guest heap block allocated by malloc/calloc/realloc/new; NULL is a no-op."
+    },
+    {
+      "va": "0x004e0177",
+      "va_int": 5112183,
+      "c_symbol": "hle_crt_004e0177",
+      "name": "operator_new",
+      "signature": "void* __cdecl operator new(size_t size)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:size:u32"
+      ],
+      "returns": "eax:u32",
+      "category": "memory",
+      "game_call_sites": 405,
+      "sample_call_sites": [
+        "0x0040112f",
+        "0x004011ec",
+        "0x00401562",
+        "0x004015fc",
+        "0x00402654"
+      ],
+      "disasm_head": [
+        "0x004e0177: push ebp",
+        "0x004e0178: mov ebp, esp",
+        "0x004e017a: sub esp, 0xc",
+        "0x004e017d: jmp 0x4e018c",
+        "0x004e017f: push dword ptr [ebp + 8]",
+        "0x004e0182: call 0x4e51c0",
+        "0x004e0187: test eax, eax",
+        "0x004e0189: pop ecx",
+        "0x004e018a: je 0x4e019b",
+        "0x004e018c: push dword ptr [ebp + 8]"
+      ],
+      "notes": "Allocates `size` bytes via guest_alloc (min 1 byte); returns VA in EAX."
+    },
+    {
+      "va": "0x004e0230",
+      "va_int": 5112368,
+      "c_symbol": "hle_crt_004e0230",
+      "name": "malloc",
+      "signature": "void* __cdecl malloc(size_t size)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:size:u32"
+      ],
+      "returns": "eax:u32",
+      "category": "memory",
+      "game_call_sites": 134,
+      "sample_call_sites": [
+        "0x0040129e",
+        "0x004016ae",
+        "0x00401bda",
+        "0x00401dc2",
+        "0x00402981"
+      ],
+      "disasm_head": [
+        "0x004e0230: push ebp",
+        "0x004e0231: mov ebp, dword ptr [esp + 8]",
+        "0x004e0235: cmp ebp, -0x20",
+        "0x004e0238: ja 0x4e02dd",
+        "0x004e023e: push ebx",
+        "0x004e023f: mov ebx, dword ptr [0x51b0cc]",
+        "0x004e0245: push esi",
+        "0x004e0246: push edi",
+        "0x004e0247: xor esi, esi",
+        "0x004e0249: cmp dword ptr [0x553114], esi"
+      ],
+      "notes": "Allocates `size` bytes via guest_alloc (min 1 byte); returns VA in EAX or 0 on failure."
+    },
+    {
+      "va": "0x004e02f3",
+      "va_int": 5112563,
+      "c_symbol": "hle_crt_004e02f3",
+      "name": "operator_delete",
+      "signature": "void __cdecl operator delete(void* ptr)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:ptr:u32"
+      ],
+      "returns": "void",
+      "category": "memory",
+      "game_call_sites": 714,
+      "sample_call_sites": [
+        "0x004011ac",
+        "0x004011c8",
+        "0x004012ec",
+        "0x004015df",
+        "0x004016cf"
+      ],
+      "disasm_head": [
+        "0x004e02f3: jmp 0x4e00d0",
+        "0x004e02f8: cmp ecx, dword ptr [0x54b458]",
+        "0x004e02fe: jne 0x4e0302",
+        "0x004e0300: repz ret",
+        "0x004e0302: jmp 0x4e53bb",
+        "0x004e0307: jmp 0x4e02f3",
+        "0x004e030c: int3",
+        "0x004e030d: int3",
+        "0x004e030e: int3",
+        "0x004e030f: int3"
+      ],
+      "notes": "Tail-jump thunk (jmp 0x004e00d0) to free(ptr)."
+    },
+    {
+      "va": "0x004e02f8",
+      "va_int": 5112568,
+      "c_symbol": "hle_crt_004e02f8",
+      "name": "__security_check_cookie",
+      "signature": "void __fastcall __security_check_cookie(uintptr_t cookie)",
+      "calling_convention": "fastcall_ecx",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "ecx:cookie:u32"
+      ],
+      "returns": "void",
+      "category": "security",
+      "game_call_sites": 431,
+      "sample_call_sites": [
+        "0x004025de",
+        "0x00402831",
+        "0x0040294f",
+        "0x00404778",
+        "0x00404918"
+      ],
+      "disasm_head": [
+        "0x004e02f8: cmp ecx, dword ptr [0x54b458]",
+        "0x004e02fe: jne 0x4e0302",
+        "0x004e0300: repz ret",
+        "0x004e0302: jmp 0x4e53bb",
+        "0x004e0307: jmp 0x4e02f3",
+        "0x004e030c: int3",
+        "0x004e030d: int3",
+        "0x004e030e: int3",
+        "0x004e030f: int3",
+        "0x004e0310: push ebp"
+      ],
+      "notes": "Checks ECX against [0x54b458] GS cookie; no stack args (repz ret). Safe no-op if cookie untouched or matching."
+    },
+    {
+      "va": "0x004e0307",
+      "va_int": 5112583,
+      "c_symbol": "hle_crt_004e0307",
+      "name": "operator_delete_array",
+      "signature": "void __cdecl operator delete[](void* ptr)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:ptr:u32"
+      ],
+      "returns": "void",
+      "category": "memory",
+      "game_call_sites": 53,
+      "sample_call_sites": [
+        "0x004019a4",
+        "0x00401abc",
+        "0x0040aa9f",
+        "0x0040b49a",
+        "0x0040bda8"
+      ],
+      "disasm_head": [
+        "0x004e0307: jmp 0x4e02f3",
+        "0x004e030c: int3",
+        "0x004e030d: int3",
+        "0x004e030e: int3",
+        "0x004e030f: int3",
+        "0x004e0310: push ebp",
+        "0x004e0311: mov ebp, esp",
+        "0x004e0313: push edi",
+        "0x004e0314: push esi",
+        "0x004e0315: mov esi, dword ptr [ebp + 0xc]"
+      ],
+      "notes": "Tail-jump thunk (jmp 0x004e02f3) to free(ptr)."
+    },
+    {
+      "va": "0x004e0675",
+      "va_int": 5113461,
+      "c_symbol": "hle_crt_004e0675",
+      "name": "operator_new_array",
+      "signature": "void* __cdecl operator new[](size_t size)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:size:u32"
+      ],
+      "returns": "eax:u32",
+      "category": "memory",
+      "game_call_sites": 51,
+      "sample_call_sites": [
+        "0x00401fc1",
+        "0x00402de0",
+        "0x00404961",
+        "0x00404a8f",
+        "0x00404b4f"
+      ],
+      "disasm_head": [
+        "0x004e0675: push dword ptr [esp + 4]",
+        "0x004e0679: call 0x4e0177",
+        "0x004e067e: pop ecx",
+        "0x004e067f: ret",
+        "0x004e0680: push dword ptr [esp + 4]",
+        "0x004e0684: call 0x4de548",
+        "0x004e0689: pop ecx",
+        "0x004e068a: ret",
+        "0x004e068b: push ebp",
+        "0x004e068c: mov ebp, esp"
+      ],
+      "notes": "Forwards [esp+4] to operator new (0x004e0177); returns VA in EAX."
+    },
+    {
+      "va": "0x004e0680",
+      "va_int": 5113472,
+      "c_symbol": "hle_crt_004e0680",
+      "name": "operator_new_array_2",
+      "signature": "void* __cdecl operator new[](size_t size)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:size:u32"
+      ],
+      "returns": "eax:u32",
+      "category": "memory",
+      "game_call_sites": 10,
+      "sample_call_sites": [
+        "0x00401967",
+        "0x00401a7f",
+        "0x0040c970",
+        "0x0040eae4",
+        "0x0040f230"
+      ],
+      "disasm_head": [
+        "0x004e0680: push dword ptr [esp + 4]",
+        "0x004e0684: call 0x4de548",
+        "0x004e0689: pop ecx",
+        "0x004e068a: ret",
+        "0x004e068b: push ebp",
+        "0x004e068c: mov ebp, esp",
+        "0x004e068e: sub esp, 0x20",
+        "0x004e0691: push ebx",
+        "0x004e0692: xor ebx, ebx",
+        "0x004e0694: cmp dword ptr [ebp + 0xc], ebx"
+      ],
+      "notes": "Forwards [esp+4] through 0x004de548 -> operator new (0x004e0177); returns VA in EAX."
+    },
+    {
+      "va": "0x004e068b",
+      "va_int": 5113483,
+      "c_symbol": "hle_crt_004e068b",
+      "name": "sprintf",
+      "signature": "int __cdecl sprintf(char* buf, const char* fmt, ...)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:buf:ptr",
+        "stack+8:fmt:cstr",
+        "stack+12:varargs"
+      ],
+      "returns": "eax:i32",
+      "category": "stdio",
+      "game_call_sites": 319,
+      "sample_call_sites": [
+        "0x0040264d",
+        "0x004047d0",
+        "0x0040b07d",
+        "0x0040b1f7",
+        "0x0040b37b"
+      ],
+      "disasm_head": [
+        "0x004e068b: push ebp",
+        "0x004e068c: mov ebp, esp",
+        "0x004e068e: sub esp, 0x20",
+        "0x004e0691: push ebx",
+        "0x004e0692: xor ebx, ebx",
+        "0x004e0694: cmp dword ptr [ebp + 0xc], ebx",
+        "0x004e0697: jne 0x4e06b6",
+        "0x004e0699: call 0x4e42d0",
+        "0x004e069e: push ebx",
+        "0x004e069f: push ebx"
+      ],
+      "notes": "Formats printf specifiers reading guest varargs from [esp+12..]; writes NUL-terminated string to buf, returns length in EAX."
+    },
+    {
+      "va": "0x004e0706",
+      "va_int": 5113606,
+      "c_symbol": "hle_crt_004e0706",
+      "name": "strncmp",
+      "signature": "int __cdecl strncmp(const char* s1, const char* s2, size_t count)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:s1:cstr",
+        "stack+8:s2:cstr",
+        "stack+12:count:u32"
+      ],
+      "returns": "eax:i32",
+      "category": "string",
+      "game_call_sites": 26,
+      "sample_call_sites": [
+        "0x00402060",
+        "0x0040288d",
+        "0x00404a00",
+        "0x0040ca17",
+        "0x00419346"
+      ],
+      "disasm_head": [
+        "0x004e0706: push ebp",
+        "0x004e0707: mov ebp, esp",
+        "0x004e0709: push ecx",
+        "0x004e070a: and dword ptr [ebp - 4], 0",
+        "0x004e070e: push ebx",
+        "0x004e070f: mov ebx, dword ptr [ebp + 0x10]",
+        "0x004e0712: test ebx, ebx",
+        "0x004e0714: jne 0x4e071d",
+        "0x004e0716: xor eax, eax",
+        "0x004e0718: jmp 0x4e07b7"
+      ],
+      "notes": "Unsigned-char lexicographical compare up to `count` bytes; returns <0, 0, or >0 in EAX."
+    },
+    {
+      "va": "0x004e07c4",
+      "va_int": 5113796,
+      "c_symbol": "hle_crt_004e07c4",
+      "name": "std_exception_ctor_default",
+      "signature": "std::exception* __thiscall std::exception::exception(void)",
+      "calling_convention": "thiscall",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "ecx:this:ptr"
+      ],
+      "returns": "eax:ptr",
+      "category": "eh_rtti",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x00405648"
+      ],
+      "disasm_head": [
+        "0x004e07c4: mov eax, ecx",
+        "0x004e07c6: and dword ptr [eax + 4], 0",
+        "0x004e07ca: and dword ptr [eax + 8], 0",
+        "0x004e07ce: mov dword ptr [eax], 0x51bd40",
+        "0x004e07d4: ret",
+        "0x004e07d5: push ebx",
+        "0x004e07d6: mov ebx, dword ptr [esp + 8]",
+        "0x004e07da: push esi",
+        "0x004e07db: push edi",
+        "0x004e07dc: mov edi, ecx"
+      ],
+      "notes": "Initializes std::exception struct at ECX: [this+0]=0x0051bd40 (vftable), [this+4]=0, [this+8]=0; returns this in EAX."
+    },
+    {
+      "va": "0x004e07d5",
+      "va_int": 5113813,
+      "c_symbol": "hle_crt_004e07d5",
+      "name": "std_exception_ctor_what",
+      "signature": "std::exception* __thiscall std::exception::exception(const char* const& what)",
+      "calling_convention": "thiscall",
+      "stack_cleanup": 4,
+      "ret_pop_total": 8,
+      "params": [
+        "ecx:this:ptr",
+        "stack+4:pwhat:ptr"
+      ],
+      "returns": "eax:ptr",
+      "category": "eh_rtti",
+      "game_call_sites": 13,
+      "sample_call_sites": [
+        "0x004081b7",
+        "0x004118bf",
+        "0x00411991",
+        "0x00414b3f",
+        "0x0043291f"
+      ],
+      "disasm_head": [
+        "0x004e07d5: push ebx",
+        "0x004e07d6: mov ebx, dword ptr [esp + 8]",
+        "0x004e07da: push esi",
+        "0x004e07db: push edi",
+        "0x004e07dc: mov edi, ecx",
+        "0x004e07de: mov dword ptr [edi], 0x51bd40",
+        "0x004e07e4: mov eax, dword ptr [ebx]",
+        "0x004e07e6: test eax, eax",
+        "0x004e07e8: je 0x4e0810",
+        "0x004e07ea: push eax"
+      ],
+      "notes": "Copies *pwhat into heap buffer at [this+4], sets [this+0]=0x0051bd40, [this+8]=1; pops 4-byte stack arg (ret 4); returns this in EAX."
+    },
+    {
+      "va": "0x004e083b",
+      "va_int": 5113915,
+      "c_symbol": "hle_crt_004e083b",
+      "name": "std_exception_ctor_copy",
+      "signature": "std::exception* __thiscall std::exception::exception(const std::exception& rhs)",
+      "calling_convention": "thiscall",
+      "stack_cleanup": 4,
+      "ret_pop_total": 8,
+      "params": [
+        "ecx:this:ptr",
+        "stack+4:rhs:ptr"
+      ],
+      "returns": "eax:ptr",
+      "category": "eh_rtti",
+      "game_call_sites": 2,
+      "sample_call_sites": [
+        "0x0040575e",
+        "0x004081e8"
+      ],
+      "disasm_head": [
+        "0x004e083b: push ebx",
+        "0x004e083c: mov ebx, dword ptr [esp + 8]",
+        "0x004e0840: push esi",
+        "0x004e0841: mov esi, ecx",
+        "0x004e0843: mov dword ptr [esi], 0x51bd40",
+        "0x004e0849: mov eax, dword ptr [ebx + 8]",
+        "0x004e084c: mov dword ptr [esi + 8], eax",
+        "0x004e084f: test eax, eax",
+        "0x004e0851: mov eax, dword ptr [ebx + 4]",
+        "0x004e0854: push edi"
+      ],
+      "notes": "Copy-constructs std::exception at ECX from rhs; pops 4-byte stack arg (ret 4); returns this in EAX."
+    },
+    {
+      "va": "0x004e0893",
+      "va_int": 5114003,
+      "c_symbol": "hle_crt_004e0893",
+      "name": "std_exception_dtor",
+      "signature": "void __thiscall std::exception::~exception(void)",
+      "calling_convention": "thiscall",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "ecx:this:ptr"
+      ],
+      "returns": "void",
+      "category": "eh_rtti",
+      "game_call_sites": 4,
+      "sample_call_sites": [
+        "0x004055e6",
+        "0x004055f9",
+        "0x004056cc",
+        "0x0040571d"
+      ],
+      "disasm_head": [
+        "0x004e0893: cmp dword ptr [ecx + 8], 0",
+        "0x004e0897: mov dword ptr [ecx], 0x51bd40",
+        "0x004e089d: je 0x4e08a8",
+        "0x004e089f: push dword ptr [ecx + 4]",
+        "0x004e08a2: call 0x4e00d0",
+        "0x004e08a7: pop ecx",
+        "0x004e08a8: ret",
+        "0x004e08a9: mov eax, dword ptr [ecx + 4]",
+        "0x004e08ac: test eax, eax",
+        "0x004e08ae: jne 0x4e08b5"
+      ],
+      "notes": "Sets [this+0]=0x0051bd40 and frees [this+4] if [this+8] != 0."
+    },
+    {
+      "va": "0x004e0917",
+      "va_int": 5114135,
+      "c_symbol": "hle_crt_004e0917",
+      "name": "memcpy_s",
+      "signature": "errno_t __cdecl memcpy_s(void* dest, size_t destsz, const void* src, size_t count)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:dest:ptr",
+        "stack+8:destsz:u32",
+        "stack+12:src:ptr",
+        "stack+16:count:u32"
+      ],
+      "returns": "eax:i32",
+      "category": "memory",
+      "game_call_sites": 6,
+      "sample_call_sites": [
+        "0x00407a8a",
+        "0x00407cb1",
+        "0x00407dcc",
+        "0x004080f6",
+        "0x0041441f"
+      ],
+      "disasm_head": [
+        "0x004e0917: push ebp",
+        "0x004e0918: mov ebp, esp",
+        "0x004e091a: push esi",
+        "0x004e091b: mov esi, dword ptr [ebp + 0x14]",
+        "0x004e091e: push edi",
+        "0x004e091f: xor edi, edi",
+        "0x004e0921: cmp esi, edi",
+        "0x004e0923: jne 0x4e0929",
+        "0x004e0925: xor eax, eax",
+        "0x004e0927: jmp 0x4e098e"
+      ],
+      "notes": "Bounds-checked copy of `count` bytes from `src` to `dest`; returns 0 on success or EINVAL(22)/ERANGE(34)."
+    },
+    {
+      "va": "0x004e0ab6",
+      "va_int": 5114550,
+      "c_symbol": "hle_crt_004e0ab6",
+      "name": "atexit",
+      "signature": "int __cdecl atexit(void (*func)(void))",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:func:va"
+      ],
+      "returns": "eax:i32",
+      "category": "runtime",
+      "game_call_sites": 2,
+      "sample_call_sites": [
+        "0x004c1dc2",
+        "0x004c1fc7"
+      ],
+      "disasm_head": [
+        "0x004e0ab6: push dword ptr [esp + 4]",
+        "0x004e0aba: call 0x4e0a7a",
+        "0x004e0abf: neg eax",
+        "0x004e0ac1: sbb eax, eax",
+        "0x004e0ac3: neg eax",
+        "0x004e0ac5: pop ecx",
+        "0x004e0ac6: dec eax",
+        "0x004e0ac7: ret",
+        "0x004e0ac8: mov eax, dword ptr [esp + 4]",
+        "0x004e0acc: mov dword ptr [0x553110], eax"
+      ],
+      "notes": "Registers guest cleanup callback VA (e.g., 0x00519fe0, 0x0051a020) for process exit; returns 0."
+    },
+    {
+      "va": "0x004e0bf2",
+      "va_int": 5114866,
+      "c_symbol": "hle_crt_004e0bf2",
+      "name": "_invalid_parameter_noinfo",
+      "signature": "void __cdecl _invalid_parameter_noinfo(void)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [],
+      "returns": "void",
+      "category": "runtime",
+      "game_call_sites": 516,
+      "sample_call_sites": [
+        "0x00406458",
+        "0x0040646f",
+        "0x004065b0",
+        "0x0040662a",
+        "0x00406643"
+      ],
+      "disasm_head": [
+        "0x004e0bf2: xor eax, eax",
+        "0x004e0bf4: push eax",
+        "0x004e0bf5: push eax",
+        "0x004e0bf6: push eax",
+        "0x004e0bf7: push eax",
+        "0x004e0bf8: push eax",
+        "0x004e0bf9: call 0x4e0bce",
+        "0x004e0bfe: add esp, 0x14",
+        "0x004e0c01: ret",
+        "0x004e0c02: push ebp"
+      ],
+      "notes": "MSVC8 CRT invalid-parameter handler (calls _invoke_watson if registered; safe log + return in HLE)."
+    },
+    {
+      "va": "0x004e0c02",
+      "va_int": 5114882,
+      "c_symbol": "hle_crt_004e0c02",
+      "name": "memmove_s",
+      "signature": "errno_t __cdecl memmove_s(void* dest, size_t destsz, const void* src, size_t count)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:dest:ptr",
+        "stack+8:destsz:u32",
+        "stack+12:src:ptr",
+        "stack+16:count:u32"
+      ],
+      "returns": "eax:i32",
+      "category": "memory",
+      "game_call_sites": 59,
+      "sample_call_sites": [
+        "0x00406495",
+        "0x00406661",
+        "0x004078f7",
+        "0x00407d3d",
+        "0x00407ef7"
+      ],
+      "disasm_head": [
+        "0x004e0c02: push ebp",
+        "0x004e0c03: mov ebp, esp",
+        "0x004e0c05: mov eax, dword ptr [ebp + 0x14]",
+        "0x004e0c08: push esi",
+        "0x004e0c09: push edi",
+        "0x004e0c0a: xor edi, edi",
+        "0x004e0c0c: cmp eax, edi",
+        "0x004e0c0e: je 0x4e0c57",
+        "0x004e0c10: cmp dword ptr [ebp + 8], edi",
+        "0x004e0c13: jne 0x4e0c30"
+      ],
+      "notes": "Bounds-checked overlap-safe copy of `count` bytes from `src` to `dest`; returns 0 on success."
+    },
+    {
+      "va": "0x004e0cc5",
+      "va_int": 5115077,
+      "c_symbol": "hle_crt_004e0cc5",
+      "name": "sscanf",
+      "signature": "int __cdecl sscanf(const char* str, const char* fmt, ...)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:str:cstr",
+        "stack+8:fmt:cstr",
+        "stack+12:varargs"
+      ],
+      "returns": "eax:i32",
+      "category": "stdio",
+      "game_call_sites": 58,
+      "sample_call_sites": [
+        "0x0044a471",
+        "0x0044a551",
+        "0x0044a6f7",
+        "0x0044a8a7",
+        "0x0044a914"
+      ],
+      "disasm_head": [
+        "0x004e0cc5: push esi",
+        "0x004e0cc6: mov esi, dword ptr [esp + 8]",
+        "0x004e0cca: lea eax, [esp + 0x10]",
+        "0x004e0cce: push eax",
+        "0x004e0ccf: push 0",
+        "0x004e0cd1: push dword ptr [esp + 0x14]",
+        "0x004e0cd5: push 0x4e6fdb",
+        "0x004e0cda: call 0x4e0c5d",
+        "0x004e0cdf: add esp, 0x10",
+        "0x004e0ce2: pop esi"
+      ],
+      "notes": "Parses formatted tokens from guest string `str` into guest pointer destinations at [esp+12..]; returns matched field count in EAX."
+    },
+    {
+      "va": "0x004e0cf0",
+      "va_int": 5115120,
+      "c_symbol": "hle_crt_004e0cf0",
+      "name": "strncpy",
+      "signature": "char* __cdecl strncpy(char* dest, const char* src, size_t count)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:dest:ptr",
+        "stack+8:src:cstr",
+        "stack+12:count:u32"
+      ],
+      "returns": "eax:ptr",
+      "category": "string",
+      "game_call_sites": 42,
+      "sample_call_sites": [
+        "0x0040af36",
+        "0x0040af87",
+        "0x0040b0c3",
+        "0x0040b23d",
+        "0x0040b3c3"
+      ],
+      "disasm_head": [
+        "0x004e0cf0: mov ecx, dword ptr [esp + 0xc]",
+        "0x004e0cf4: push edi",
+        "0x004e0cf5: test ecx, ecx",
+        "0x004e0cf7: je 0x4e0d8f",
+        "0x004e0cfd: push esi",
+        "0x004e0cfe: push ebx",
+        "0x004e0cff: mov ebx, ecx",
+        "0x004e0d01: mov esi, dword ptr [esp + 0x14]",
+        "0x004e0d05: test esi, 3",
+        "0x004e0d0b: mov edi, dword ptr [esp + 0x10]"
+      ],
+      "notes": "Copies up to `count` bytes from `src` to `dest`, zero-padding remainder up to `count`; returns `dest` in EAX."
+    },
+    {
+      "va": "0x004e0e20",
+      "va_int": 5115424,
+      "c_symbol": "hle_crt_004e0e20",
+      "name": "strstr",
+      "signature": "const char* __cdecl strstr(const char* haystack, const char* needle)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:haystack:cstr",
+        "stack+8:needle:cstr"
+      ],
+      "returns": "eax:ptr",
+      "category": "string",
+      "game_call_sites": 9,
+      "sample_call_sites": [
+        "0x0040c7e2",
+        "0x0040d086",
+        "0x004493b1",
+        "0x0044a865",
+        "0x0046bb63"
+      ],
+      "disasm_head": [
+        "0x004e0e20: mov ecx, dword ptr [esp + 8]",
+        "0x004e0e24: push edi",
+        "0x004e0e25: push ebx",
+        "0x004e0e26: push esi",
+        "0x004e0e27: mov dl, byte ptr [ecx]",
+        "0x004e0e29: mov edi, dword ptr [esp + 0x10]",
+        "0x004e0e2d: test dl, dl",
+        "0x004e0e2f: je 0x4e0ea0",
+        "0x004e0e31: mov dh, byte ptr [ecx + 1]",
+        "0x004e0e34: test dh, dh"
+      ],
+      "notes": "Finds first occurrence of NUL-terminated `needle` in `haystack`; returns guest VA or 0."
+    },
+    {
+      "va": "0x004e0eb7",
+      "va_int": 5115575,
+      "c_symbol": "hle_crt_004e0eb7",
+      "name": "atoi",
+      "signature": "int __cdecl atoi(const char* str)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:str:cstr"
+      ],
+      "returns": "eax:i32",
+      "category": "stdlib",
+      "game_call_sites": 197,
+      "sample_call_sites": [
+        "0x0040b022",
+        "0x0040b1a4",
+        "0x0040b2d0",
+        "0x0040c57f",
+        "0x00417609"
+      ],
+      "disasm_head": [
+        "0x004e0eb7: jmp 0x4e0ea6",
+        "0x004e0ebc: mov eax, dword ptr [esp + 4]",
+        "0x004e0ec0: test eax, eax",
+        "0x004e0ec2: push esi",
+        "0x004e0ec3: mov esi, ecx",
+        "0x004e0ec5: mov byte ptr [esi + 0xc], 0",
+        "0x004e0ec9: jne 0x4e0f2e",
+        "0x004e0ecb: call 0x4e6a58",
+        "0x004e0ed0: mov dword ptr [esi + 8], eax",
+        "0x004e0ed3: mov ecx, dword ptr [eax + 0x6c]"
+      ],
+      "notes": "Jumps to 0x004e0ea6 -> strtol(str, NULL, 10); returns parsed 32-bit signed int in EAX."
+    },
+    {
+      "va": "0x004e0fe7",
+      "va_int": 5115879,
+      "c_symbol": "hle_crt_004e0fe7",
+      "name": "atof",
+      "signature": "double __cdecl atof(const char* str)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:str:cstr"
+      ],
+      "returns": "st0:f64",
+      "category": "stdlib",
+      "game_call_sites": 28,
+      "sample_call_sites": [
+        "0x0040c5cf",
+        "0x0040df1b",
+        "0x0044974d",
+        "0x004497ba",
+        "0x00449861"
+      ],
+      "disasm_head": [
+        "0x004e0fe7: push 0",
+        "0x004e0fe9: push dword ptr [esp + 8]",
+        "0x004e0fed: call 0x4e0f3e",
+        "0x004e0ff2: pop ecx",
+        "0x004e0ff3: pop ecx",
+        "0x004e0ff4: ret",
+        "0x004e0ff5: push ebp",
+        "0x004e0ff6: mov ebp, esp",
+        "0x004e0ff8: push ecx",
+        "0x004e0ff9: push ecx"
+      ],
+      "notes": "Parses floating-point ASCII string and pushes double result onto x87 FPU stack (`ctx.fpu_push(val)`)."
+    },
+    {
+      "va": "0x004e10aa",
+      "va_int": 5116074,
+      "c_symbol": "hle_crt_004e10aa",
+      "name": "_get_crtheap",
+      "signature": "HANDLE __cdecl _get_crtheap(void)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [],
+      "returns": "eax:u32",
+      "category": "runtime",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x0040d249"
+      ],
+      "disasm_head": [
+        "0x004e10aa: mov eax, dword ptr [0x553114]",
+        "0x004e10af: ret",
+        "0x004e10b0: call 0x4e5382",
+        "0x004e10b5: push dword ptr [esp + 4]",
+        "0x004e10b9: call 0x4e51e2",
+        "0x004e10be: push dword ptr [0x54b044]",
+        "0x004e10c4: call 0x4e6808"
+      ],
+      "notes": "Returns CRT heap handle [0x00553114] (must return non-zero handle in EAX; WinMain stores it in [0x0076e65c])."
+    },
+    {
+      "va": "0x004e1340",
+      "va_int": 5116736,
+      "c_symbol": "hle_crt_004e1340",
+      "name": "exit",
+      "signature": "void __cdecl exit(int status)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:status:i32"
+      ],
+      "returns": "void",
+      "category": "runtime",
+      "game_call_sites": 9,
+      "sample_call_sites": [
+        "0x0040d2ee",
+        "0x0042719b",
+        "0x0042e88b",
+        "0x0042f5e9",
+        "0x00438b61"
+      ],
+      "disasm_head": [
+        "0x004e1340: push 0",
+        "0x004e1342: push 0",
+        "0x004e1344: push dword ptr [esp + 0xc]",
+        "0x004e1348: call 0x4e125e",
+        "0x004e134d: add esp, 0xc",
+        "0x004e1350: ret",
+        "0x004e1351: push 0",
+        "0x004e1353: push 1",
+        "0x004e1355: push dword ptr [esp + 0xc]",
+        "0x004e1359: call 0x4e125e"
+      ],
+      "notes": "Requests clean shutdown via hle_win32_post_quit(status) (do NOT abort host iOS app!)."
+    },
+    {
+      "va": "0x004e13cc",
+      "va_int": 5116876,
+      "c_symbol": "hle_crt_004e13cc",
+      "name": "realloc",
+      "signature": "void* __cdecl realloc(void* ptr, size_t new_size)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:ptr:ptr",
+        "stack+8:new_size:u32"
+      ],
+      "returns": "eax:u32",
+      "category": "memory",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x0049c623"
+      ],
+      "disasm_head": [
+        "0x004e13cc: push 0x10",
+        "0x004e13ce: push 0x543510",
+        "0x004e13d3: call 0x4e4fbc",
+        "0x004e13d8: mov ebx, dword ptr [ebp + 8]",
+        "0x004e13db: test ebx, ebx",
+        "0x004e13dd: jne 0x4e13ed",
+        "0x004e13df: push dword ptr [ebp + 0xc]",
+        "0x004e13e2: call 0x4e0230",
+        "0x004e13e7: pop ecx",
+        "0x004e13e8: jmp 0x4e15b9"
+      ],
+      "notes": "Resizes guest heap block via guest_realloc; returns new VA in EAX."
+    },
+    {
+      "va": "0x004e1660",
+      "va_int": 5117536,
+      "c_symbol": "hle_crt_004e1660",
+      "name": "strrchr",
+      "signature": "const char* __cdecl strrchr(const char* str, int c)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:str:cstr",
+        "stack+8:c:i32"
+      ],
+      "returns": "eax:ptr",
+      "category": "string",
+      "game_call_sites": 5,
+      "sample_call_sites": [
+        "0x0040b596",
+        "0x0040b67b",
+        "0x0040b74b",
+        "0x004142a3",
+        "0x004142e6"
+      ],
+      "disasm_head": [
+        "0x004e1660: push ebp",
+        "0x004e1661: mov ebp, esp",
+        "0x004e1663: push edi",
+        "0x004e1664: mov edi, dword ptr [ebp + 8]",
+        "0x004e1667: xor eax, eax",
+        "0x004e1669: or ecx, 0xffffffff",
+        "0x004e166c: repne scasb al, byte ptr es:[edi]",
+        "0x004e166e: add ecx, 1",
+        "0x004e1671: neg ecx",
+        "0x004e1673: sub edi, 1"
+      ],
+      "notes": "Finds last occurrence of `(uint8_t)c` (including NUL) in `str`; returns guest VA or 0."
+    },
+    {
+      "va": "0x004e18d3",
+      "va_int": 5118163,
+      "c_symbol": "hle_crt_004e18d3",
+      "name": "wcstombs",
+      "signature": "size_t __cdecl wcstombs(char* mbstr, const wchar_t* wcstr, size_t count)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:mbstr:ptr",
+        "stack+8:wcstr:wstr",
+        "stack+12:count:u32"
+      ],
+      "returns": "eax:u32",
+      "category": "string",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x0041724d"
+      ],
+      "disasm_head": [
+        "0x004e18d3: push 0",
+        "0x004e18d5: push dword ptr [esp + 0x10]",
+        "0x004e18d9: push dword ptr [esp + 0x10]",
+        "0x004e18dd: push dword ptr [esp + 0x10]",
+        "0x004e18e1: call 0x4e168d",
+        "0x004e18e6: add esp, 0x10",
+        "0x004e18e9: ret",
+        "0x004e18ea: int3",
+        "0x004e18eb: int3",
+        "0x004e18ec: int3"
+      ],
+      "notes": "Converts UTF-16LE `wcstr` to Shift-JIS/CP932 or ASCII multibyte string in `mbstr` up to `count` bytes; returns byte count (excluding NUL)."
+    },
+    {
+      "va": "0x004e1900",
+      "va_int": 5118208,
+      "c_symbol": "hle_crt_004e1900",
+      "name": "strchr",
+      "signature": "const char* __cdecl strchr(const char* str, int c)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:str:cstr",
+        "stack+8:c:i32"
+      ],
+      "returns": "eax:ptr",
+      "category": "string",
+      "game_call_sites": 22,
+      "sample_call_sites": [
+        "0x0049f1bd",
+        "0x0049f1dc",
+        "0x0049f1fb",
+        "0x0049f23d",
+        "0x004a7c8c"
+      ],
+      "disasm_head": [
+        "0x004e1900: xor eax, eax",
+        "0x004e1902: mov al, byte ptr [esp + 8]",
+        "0x004e1906: push ebx",
+        "0x004e1907: mov ebx, eax",
+        "0x004e1909: shl eax, 8",
+        "0x004e190c: mov edx, dword ptr [esp + 8]",
+        "0x004e1910: test edx, 3",
+        "0x004e1916: je 0x4e192d",
+        "0x004e1918: mov cl, byte ptr [edx]",
+        "0x004e191a: add edx, 1"
+      ],
+      "notes": "Finds first occurrence of `(uint8_t)c` (including NUL) in `str`; returns guest VA or 0."
+    },
+    {
+      "va": "0x004e1a12",
+      "va_int": 5118482,
+      "c_symbol": "hle_crt_004e1a12",
+      "name": "isalnum",
+      "signature": "int __cdecl isalnum(int c)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:c:i32"
+      ],
+      "returns": "eax:i32",
+      "category": "ctype",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x004a7c3c"
+      ],
+      "disasm_head": [
+        "0x004e1a12: cmp dword ptr [0x55393c], 0",
+        "0x004e1a19: jne 0x4e1a2f",
+        "0x004e1a1b: mov eax, dword ptr [esp + 4]",
+        "0x004e1a1f: mov ecx, dword ptr [0x54ba70]",
+        "0x004e1a25: movzx eax, word ptr [ecx + eax*2]",
+        "0x004e1a29: and eax, 0x103",
+        "0x004e1a2e: ret",
+        "0x004e1a2f: push 0",
+        "0x004e1a31: push dword ptr [esp + 8]",
+        "0x004e1a35: call 0x4e19be"
+      ],
+      "notes": "C-locale alphanumeric check (`std::isalnum((unsigned char)c)` or table mask 0x103); returns non-zero if alphanumeric, 0 otherwise."
+    },
+    {
+      "va": "0x004e1a8c",
+      "va_int": 5118604,
+      "c_symbol": "hle_crt_004e1a8c",
+      "name": "isdigit",
+      "signature": "int __cdecl isdigit(int c)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:c:i32"
+      ],
+      "returns": "eax:i32",
+      "category": "ctype",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x004a7c05"
+      ],
+      "disasm_head": [
+        "0x004e1a8c: cmp dword ptr [0x55393c], 0",
+        "0x004e1a93: jne 0x4e1aa7",
+        "0x004e1a95: mov eax, dword ptr [esp + 4]",
+        "0x004e1a99: mov ecx, dword ptr [0x54ba70]",
+        "0x004e1a9f: movzx eax, byte ptr [ecx + eax*2]",
+        "0x004e1aa3: and eax, 4",
+        "0x004e1aa6: ret",
+        "0x004e1aa7: push 0",
+        "0x004e1aa9: push dword ptr [esp + 8]",
+        "0x004e1aad: call 0x4e1a3d"
+      ],
+      "notes": "C-locale decimal digit check ('0'..'9' -> non-zero 4, else 0)."
+    },
+    {
+      "va": "0x004e1b09",
+      "va_int": 5118729,
+      "c_symbol": "hle_crt_004e1b09",
+      "name": "isprint",
+      "signature": "int __cdecl isprint(int c)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:c:i32"
+      ],
+      "returns": "eax:i32",
+      "category": "ctype",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x00422897"
+      ],
+      "disasm_head": [
+        "0x004e1b09: cmp dword ptr [0x55393c], 0",
+        "0x004e1b10: jne 0x4e1b26",
+        "0x004e1b12: mov eax, dword ptr [esp + 4]",
+        "0x004e1b16: mov ecx, dword ptr [0x54ba70]",
+        "0x004e1b1c: movzx eax, byte ptr [ecx + eax*2]",
+        "0x004e1b20: and eax, 0x80",
+        "0x004e1b25: ret",
+        "0x004e1b26: push 0",
+        "0x004e1b28: push dword ptr [esp + 8]",
+        "0x004e1b2c: call 0x4e1ab5"
+      ],
+      "notes": "C-locale printable ASCII check (0x20..0x7E -> non-zero 0x80, else 0)."
+    },
+    {
+      "va": "0x004e1c34",
+      "va_int": 5119028,
+      "c_symbol": "hle_crt_004e1c34",
+      "name": "__ehvec_dtor",
+      "signature": "void __stdcall __ehvec_dtor(void* ptr, size_t size, int count, void (__thiscall *dtor)(void*))",
+      "calling_convention": "stdcall",
+      "stack_cleanup": 16,
+      "ret_pop_total": 20,
+      "params": [
+        "stack+4:ptr:ptr",
+        "stack+8:size:u32",
+        "stack+12:count:i32",
+        "stack+16:dtor:va"
+      ],
+      "returns": "void",
+      "category": "eh_rtti",
+      "game_call_sites": 26,
+      "sample_call_sites": [
+        "0x0041ede6",
+        "0x0041ee00",
+        "0x0041ee1d",
+        "0x00426ef7",
+        "0x0043e927"
+      ],
+      "disasm_head": [
+        "0x004e1c34: push 0xc",
+        "0x004e1c36: push 0x543550",
+        "0x004e1c3b: call 0x4e4fbc",
+        "0x004e1c40: and dword ptr [ebp - 0x1c], 0",
+        "0x004e1c44: mov esi, dword ptr [ebp + 0xc]",
+        "0x004e1c47: mov eax, esi",
+        "0x004e1c49: imul eax, dword ptr [ebp + 0x10]",
+        "0x004e1c4d: add dword ptr [ebp + 8], eax",
+        "0x004e1c50: and dword ptr [ebp - 4], 0",
+        "0x004e1c54: dec dword ptr [ebp + 0x10]"
+      ],
+      "notes": "Calls `dtor` with ECX = ptr + i*size for i = count-1 down to 0 via call_indirect (pushing dummy return address before each dtor); ret 0x10."
+    },
+    {
+      "va": "0x004e1c97",
+      "va_int": 5119127,
+      "c_symbol": "hle_crt_004e1c97",
+      "name": "__ehvec_ctor",
+      "signature": "void __stdcall __ehvec_ctor(void* ptr, size_t size, int count, void (__thiscall *ctor)(void*), void (__thiscall *dtor)(void*))",
+      "calling_convention": "stdcall",
+      "stack_cleanup": 20,
+      "ret_pop_total": 24,
+      "params": [
+        "stack+4:ptr:ptr",
+        "stack+8:size:u32",
+        "stack+12:count:i32",
+        "stack+16:ctor:va",
+        "stack+20:dtor:va"
+      ],
+      "returns": "void",
+      "category": "eh_rtti",
+      "game_call_sites": 22,
+      "sample_call_sites": [
+        "0x0041ecf6",
+        "0x0041ed16",
+        "0x0041ed33",
+        "0x00426d65",
+        "0x0048fb3d"
+      ],
+      "disasm_head": [
+        "0x004e1c97: push 0x10",
+        "0x004e1c99: push 0x543570",
+        "0x004e1c9e: call 0x4e4fbc",
+        "0x004e1ca3: xor eax, eax",
+        "0x004e1ca5: mov dword ptr [ebp - 0x20], eax",
+        "0x004e1ca8: mov dword ptr [ebp - 4], eax",
+        "0x004e1cab: mov dword ptr [ebp - 0x1c], eax",
+        "0x004e1cae: mov eax, dword ptr [ebp - 0x1c]",
+        "0x004e1cb1: cmp eax, dword ptr [ebp + 0x10]",
+        "0x004e1cb4: jge 0x4e1cc9"
+      ],
+      "notes": "Calls `ctor` with ECX = ptr + i*size for i = 0..count-1 via call_indirect (pushing dummy return address before each ctor); ret 0x14."
+    },
+    {
+      "va": "0x004e1cfc",
+      "va_int": 5119228,
+      "c_symbol": "hle_crt_004e1cfc",
+      "name": "_time64",
+      "signature": "int64_t __cdecl _time64(int64_t* timer)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:timer:ptr"
+      ],
+      "returns": "edx_eax:i64",
+      "category": "time",
+      "game_call_sites": 9,
+      "sample_call_sites": [
+        "0x00421a03",
+        "0x00493ef3",
+        "0x00494377",
+        "0x004944c2",
+        "0x004953c5"
+      ],
+      "disasm_head": [
+        "0x004e1cfc: push ebp",
+        "0x004e1cfd: mov ebp, esp",
+        "0x004e1cff: push ecx",
+        "0x004e1d00: push ecx",
+        "0x004e1d01: lea eax, [ebp - 8]",
+        "0x004e1d04: push eax",
+        "0x004e1d05: call dword ptr [0x51b198]",
+        "0x004e1d0b: mov eax, dword ptr [ebp - 8]",
+        "0x004e1d0e: mov ecx, dword ptr [ebp - 4]",
+        "0x004e1d11: push 0"
+      ],
+      "notes": "Gets current Unix epoch seconds as 64-bit int, writes to `*timer` if non-null, returns low in EAX and high in EDX."
+    },
+    {
+      "va": "0x004e1d40",
+      "va_int": 5119296,
+      "c_symbol": "hle_crt_004e1d40",
+      "name": "memchr",
+      "signature": "const void* __cdecl memchr(const void* buf, int c, size_t count)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:buf:ptr",
+        "stack+8:c:i32",
+        "stack+12:count:u32"
+      ],
+      "returns": "eax:ptr",
+      "category": "memory",
+      "game_call_sites": 2,
+      "sample_call_sites": [
+        "0x004400fb",
+        "0x00440120"
+      ],
+      "disasm_head": [
+        "0x004e1d40: mov eax, dword ptr [esp + 0xc]",
+        "0x004e1d44: push ebx",
+        "0x004e1d45: test eax, eax",
+        "0x004e1d47: je 0x4e1d9b",
+        "0x004e1d49: mov edx, dword ptr [esp + 8]",
+        "0x004e1d4d: xor ebx, ebx",
+        "0x004e1d4f: mov bl, byte ptr [esp + 0xc]",
+        "0x004e1d53: test edx, 3",
+        "0x004e1d59: je 0x4e1d71",
+        "0x004e1d5b: mov cl, byte ptr [edx]"
+      ],
+      "notes": "Scans `count` bytes at `buf` for `(uint8_t)c`; returns guest VA or 0."
+    },
+    {
+      "va": "0x004e1ded",
+      "va_int": 5119469,
+      "c_symbol": "hle_crt_004e1ded",
+      "name": "_difftime64",
+      "signature": "double __cdecl _difftime64(int64_t time1, int64_t time0)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:time1:i64",
+        "stack+12:time0:i64"
+      ],
+      "returns": "st0:f64",
+      "category": "time",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x004943d2"
+      ],
+      "disasm_head": [
+        "0x004e1ded: push ebp",
+        "0x004e1dee: mov ebp, esp",
+        "0x004e1df0: cmp dword ptr [ebp + 0x14], 0",
+        "0x004e1df4: jl 0x4e1e1f",
+        "0x004e1df6: jg 0x4e1dfe",
+        "0x004e1df8: cmp dword ptr [ebp + 0x10], 0",
+        "0x004e1dfc: jb 0x4e1e1f",
+        "0x004e1dfe: mov ecx, dword ptr [ebp + 0xc]",
+        "0x004e1e01: test ecx, ecx",
+        "0x004e1e03: jl 0x4e1e1f"
+      ],
+      "notes": "Computes `double(time1 - time0)` (if both >= 0) and pushes result onto x87 FPU stack (`ctx.fpu_push(diff)`)."
+    },
+    {
+      "va": "0x004e1e2e",
+      "va_int": 5119534,
+      "c_symbol": "hle_crt_004e1e2e",
+      "name": "_endthreadex",
+      "signature": "void __cdecl _endthreadex(unsigned retval)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:retval:u32"
+      ],
+      "returns": "void",
+      "category": "thread",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x0049e88f"
+      ],
+      "disasm_head": [
+        "0x004e1e2e: cmp dword ptr [0x51c600], 0",
+        "0x004e1e35: je 0x4e1e4c",
+        "0x004e1e37: push 0x51c600",
+        "0x004e1e3c: call 0x4e91c0",
+        "0x004e1e41: test eax, eax",
+        "0x004e1e43: pop ecx",
+        "0x004e1e44: je 0x4e1e4c",
+        "0x004e1e46: call dword ptr [0x51c600]",
+        "0x004e1e4c: call 0x4e69e1",
+        "0x004e1e51: test eax, eax"
+      ],
+      "notes": "Terminates current spawned guest worker thread cleanly (sets exit code)."
+    },
+    {
+      "va": "0x004e1f28",
+      "va_int": 5119784,
+      "c_symbol": "hle_crt_004e1f28",
+      "name": "_beginthreadex",
+      "signature": "uintptr_t __cdecl _beginthreadex(void* security, unsigned stack_size, unsigned (__stdcall *start_address)(void*), void* arglist, unsigned initflag, unsigned* thrdaddr)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:security:ptr",
+        "stack+8:stack_size:u32",
+        "stack+12:start_address:va",
+        "stack+16:arglist:ptr",
+        "stack+20:initflag:u32",
+        "stack+24:thrdaddr:ptr"
+      ],
+      "returns": "eax:u32",
+      "category": "thread",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x00498ce9"
+      ],
+      "disasm_head": [
+        "0x004e1f28: push ebp",
+        "0x004e1f29: mov ebp, esp",
+        "0x004e1f2b: push ecx",
+        "0x004e1f2c: push ebx",
+        "0x004e1f2d: push edi",
+        "0x004e1f2e: mov edi, dword ptr [ebp + 0x10]",
+        "0x004e1f31: xor ebx, ebx",
+        "0x004e1f33: cmp edi, ebx",
+        "0x004e1f35: mov dword ptr [ebp - 4], ebx",
+        "0x004e1f38: jne 0x4e1f56"
+      ],
+      "notes": "Spawns std::thread running guest `start_address(arglist)` with freshly allocated GuestMemory thread stack and CpuContext; returns synthetic thread HANDLE in EAX."
+    },
+    {
+      "va": "0x004e20de",
+      "va_int": 5120222,
+      "c_symbol": "hle_crt_004e20de",
+      "name": "_stricmp",
+      "signature": "int __cdecl _stricmp(const char* s1, const char* s2)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:s1:cstr",
+        "stack+8:s2:cstr"
+      ],
+      "returns": "eax:i32",
+      "category": "string",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x00499b66"
+      ],
+      "disasm_head": [
+        "0x004e20de: push ebp",
+        "0x004e20df: mov ebp, esp",
+        "0x004e20e1: push esi",
+        "0x004e20e2: xor esi, esi",
+        "0x004e20e4: cmp dword ptr [0x55393c], esi",
+        "0x004e20ea: jne 0x4e211c",
+        "0x004e20ec: cmp dword ptr [ebp + 8], esi",
+        "0x004e20ef: jne 0x4e2110",
+        "0x004e20f1: call 0x4e42d0",
+        "0x004e20f6: push esi"
+      ],
+      "notes": "ASCII case-insensitive string compare; returns <0, 0, or >0 in EAX."
+    },
+    {
+      "va": "0x004e21df",
+      "va_int": 5120479,
+      "c_symbol": "hle_crt_004e21df",
+      "name": "_vsnprintf",
+      "signature": "int __cdecl _vsnprintf(char* buf, size_t count, const char* fmt, va_list ap)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:buf:ptr",
+        "stack+8:count:u32",
+        "stack+12:fmt:cstr",
+        "stack+16:ap:ptr"
+      ],
+      "returns": "eax:i32",
+      "category": "stdio",
+      "game_call_sites": 4,
+      "sample_call_sites": [
+        "0x00499db7",
+        "0x0049a0c8",
+        "0x0049a38a",
+        "0x004c1e0e"
+      ],
+      "disasm_head": [
+        "0x004e21df: push dword ptr [esp + 0x10]",
+        "0x004e21e3: push 0",
+        "0x004e21e5: push dword ptr [esp + 0x14]",
+        "0x004e21e9: push dword ptr [esp + 0x14]",
+        "0x004e21ed: push dword ptr [esp + 0x14]",
+        "0x004e21f1: call 0x4e212e",
+        "0x004e21f6: add esp, 0x14",
+        "0x004e21f9: ret",
+        "0x004e21fa: mov eax, dword ptr [esp + 4]"
+      ],
+      "notes": "Formats `fmt` using guest `va_list` pointer `ap` into `buf` (up to `count` chars); returns written count or -1 if truncated."
+    },
+    {
+      "va": "0x004e2ca0",
+      "va_int": 5123232,
+      "c_symbol": "hle_crt_004e2ca0",
+      "name": "strftime",
+      "signature": "size_t __cdecl strftime(char* str, size_t maxsize, const char* fmt, const struct tm* timeptr)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:str:ptr",
+        "stack+8:maxsize:u32",
+        "stack+12:fmt:cstr",
+        "stack+16:timeptr:ptr"
+      ],
+      "returns": "eax:u32",
+      "category": "time",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x0049a08a"
+      ],
+      "disasm_head": [
+        "0x004e2ca0: push 0",
+        "0x004e2ca2: push 0",
+        "0x004e2ca4: push dword ptr [esp + 0x18]",
+        "0x004e2ca8: push dword ptr [esp + 0x18]",
+        "0x004e2cac: push dword ptr [esp + 0x18]",
+        "0x004e2cb0: push dword ptr [esp + 0x18]",
+        "0x004e2cb4: call 0x4e2af1",
+        "0x004e2cb9: add esp, 0x18",
+        "0x004e2cbc: ret"
+      ],
+      "notes": "Formats 36-byte MSVC `struct tm` at `timeptr` (9 int32 fields: sec, min, hour, mday, mon, year, wday, yday, isdst) into `str`."
+    },
+    {
+      "va": "0x004e2cbd",
+      "va_int": 5123261,
+      "c_symbol": "hle_crt_004e2cbd",
+      "name": "remove",
+      "signature": "int __cdecl remove(const char* path)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:path:cstr"
+      ],
+      "returns": "eax:i32",
+      "category": "stdio",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x00499e9d"
+      ],
+      "disasm_head": [
+        "0x004e2cbd: push dword ptr [esp + 4]",
+        "0x004e2cc1: call dword ptr [0x51b0a4]",
+        "0x004e2cc7: test eax, eax",
+        "0x004e2cc9: jne 0x4e2cd3",
+        "0x004e2ccb: call dword ptr [0x51b030]",
+        "0x004e2cd1: jmp 0x4e2cd5",
+        "0x004e2cd3: xor eax, eax",
+        "0x004e2cd5: test eax, eax",
+        "0x004e2cd7: je 0x4e2ce4",
+        "0x004e2cd9: push eax"
+      ],
+      "notes": "Deletes file mapped case-insensitively inside BYOC assets dir; returns 0 on success or -1."
+    },
+    {
+      "va": "0x004e2d59",
+      "va_int": 5123417,
+      "c_symbol": "hle_crt_004e2d59",
+      "name": "fclose",
+      "signature": "int __cdecl fclose(FILE* stream)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:stream:ptr"
+      ],
+      "returns": "eax:i32",
+      "category": "stdio",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x0049a4c2"
+      ],
+      "disasm_head": [
+        "0x004e2d59: push 0xc",
+        "0x004e2d5b: push 0x5435b0",
+        "0x004e2d60: call 0x4e4fbc",
+        "0x004e2d65: or dword ptr [ebp - 0x1c], 0xffffffff",
+        "0x004e2d69: xor eax, eax",
+        "0x004e2d6b: mov esi, dword ptr [ebp + 8]",
+        "0x004e2d6e: xor edi, edi",
+        "0x004e2d70: cmp esi, edi",
+        "0x004e2d72: setne al",
+        "0x004e2d75: cmp eax, edi"
+      ],
+      "notes": "Closes guest FILE* stream if tracked in HLE FILE table (e.g. from fopen), else safe no-op returning 0."
+    },
+    {
+      "va": "0x004e309a",
+      "va_int": 5124250,
+      "c_symbol": "hle_crt_004e309a",
+      "name": "_localtime32",
+      "signature": "struct tm* __cdecl _localtime32(const int32_t* timep)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:timep:ptr"
+      ],
+      "returns": "eax:ptr",
+      "category": "time",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x0049a075"
+      ],
+      "disasm_head": [
+        "0x004e309a: push esi",
+        "0x004e309b: call 0x4eafc2",
+        "0x004e30a0: mov esi, eax",
+        "0x004e30a2: test esi, esi",
+        "0x004e30a4: jne 0x4e30a8",
+        "0x004e30a6: pop esi",
+        "0x004e30a7: ret",
+        "0x004e30a8: push dword ptr [esp + 8]",
+        "0x004e30ac: push esi",
+        "0x004e30ad: call 0x4e2dd5"
+      ],
+      "notes": "Converts 32-bit Unix timestamp `*timep` to local time and writes 9 int32 fields into static/TLS guest `struct tm` buffer; returns buffer VA in EAX."
+    },
+    {
+      "va": "0x004e30be",
+      "va_int": 5124286,
+      "c_symbol": "hle_crt_004e30be",
+      "name": "_snprintf",
+      "signature": "int __cdecl _snprintf(char* buf, size_t count, const char* fmt, ...)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:buf:ptr",
+        "stack+8:count:u32",
+        "stack+12:fmt:cstr",
+        "stack+16:varargs"
+      ],
+      "returns": "eax:i32",
+      "category": "stdio",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x00499e3b"
+      ],
+      "disasm_head": [
+        "0x004e30be: push ebp",
+        "0x004e30bf: mov ebp, esp",
+        "0x004e30c1: sub esp, 0x20",
+        "0x004e30c4: push ebx",
+        "0x004e30c5: xor ebx, ebx",
+        "0x004e30c7: cmp dword ptr [ebp + 0x10], ebx",
+        "0x004e30ca: jne 0x4e30e9",
+        "0x004e30cc: call 0x4e42d0",
+        "0x004e30d1: push ebx",
+        "0x004e30d2: push ebx"
+      ],
+      "notes": "Formats printf specifiers reading guest varargs from [esp+16..] into `buf` (max `count` bytes); returns chars written or -1."
+    },
+    {
+      "va": "0x004e325b",
+      "va_int": 5124699,
+      "c_symbol": "hle_crt_004e325b",
+      "name": "_strnicmp",
+      "signature": "int __cdecl _strnicmp(const char* s1, const char* s2, size_t count)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:s1:cstr",
+        "stack+8:s2:cstr",
+        "stack+12:count:u32"
+      ],
+      "returns": "eax:i32",
+      "category": "string",
+      "game_call_sites": 2,
+      "sample_call_sites": [
+        "0x0049bee9",
+        "0x0049d13b"
+      ],
+      "disasm_head": [
+        "0x004e325b: push ebp",
+        "0x004e325c: mov ebp, esp",
+        "0x004e325e: push esi",
+        "0x004e325f: xor esi, esi",
+        "0x004e3261: cmp dword ptr [0x55393c], esi",
+        "0x004e3267: jne 0x4e32a2",
+        "0x004e3269: cmp dword ptr [ebp + 8], esi",
+        "0x004e326c: jne 0x4e328d",
+        "0x004e326e: call 0x4e42d0",
+        "0x004e3273: push esi"
+      ],
+      "notes": "ASCII case-insensitive compare up to `count` chars; returns <0, 0, or >0 in EAX."
+    },
+    {
+      "va": "0x004e3333",
+      "va_int": 5124915,
+      "c_symbol": "hle_crt_004e3333",
+      "name": "vsprintf",
+      "signature": "int __cdecl vsprintf(char* buf, const char* fmt, va_list ap)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:buf:ptr",
+        "stack+8:fmt:cstr",
+        "stack+12:ap:ptr"
+      ],
+      "returns": "eax:i32",
+      "category": "stdio",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x0049d6d0"
+      ],
+      "disasm_head": [
+        "0x004e3333: push dword ptr [esp + 0xc]",
+        "0x004e3337: push 0",
+        "0x004e3339: push dword ptr [esp + 0x10]",
+        "0x004e333d: push dword ptr [esp + 0x10]",
+        "0x004e3341: call 0x4e32b7",
+        "0x004e3346: add esp, 0x10",
+        "0x004e3349: ret",
+        "0x004e334a: push ebp",
+        "0x004e334b: mov ebp, esp",
+        "0x004e334d: mov eax, dword ptr [ebp + 0x10]"
+      ],
+      "notes": "Formats `fmt` using guest `va_list` pointer `ap` into `buf`; returns written length in EAX."
+    },
+    {
+      "va": "0x004e334a",
+      "va_int": 5124938,
+      "c_symbol": "hle_crt_004e334a",
+      "name": "_controlfp_s",
+      "signature": "errno_t __cdecl _controlfp_s(unsigned int* currentControl, unsigned int newControl, unsigned int mask)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:currentControl:ptr",
+        "stack+8:newControl:u32",
+        "stack+12:mask:u32"
+      ],
+      "returns": "eax:i32",
+      "category": "float",
+      "game_call_sites": 2,
+      "sample_call_sites": [
+        "0x004a3ce4",
+        "0x004a3cf8"
+      ],
+      "disasm_head": [
+        "0x004e334a: push ebp",
+        "0x004e334b: mov ebp, esp",
+        "0x004e334d: mov eax, dword ptr [ebp + 0x10]",
+        "0x004e3350: mov ecx, dword ptr [ebp + 0xc]",
+        "0x004e3353: and eax, 0xfff7ffff",
+        "0x004e3358: and ecx, eax",
+        "0x004e335a: test ecx, 0xfcf0fce0",
+        "0x004e3360: push esi",
+        "0x004e3361: je 0x4e3394",
+        "0x004e3363: push edi"
+      ],
+      "notes": "Updates masked x87 rounding/precision bits in `ctx.fpu_cw` and writes previous/current control word to `*currentControl` if non-null; returns 0."
+    },
+    {
+      "va": "0x004e34e2",
+      "va_int": 5125346,
+      "c_symbol": "hle_crt_004e34e2",
+      "name": "_clearfp",
+      "signature": "unsigned int __cdecl _clearfp(void)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [],
+      "returns": "eax:u32",
+      "category": "float",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x004a3cd3"
+      ],
+      "disasm_head": [
+        "0x004e34e2: push ebp",
+        "0x004e34e3: mov ebp, esp",
+        "0x004e34e5: push ecx",
+        "0x004e34e6: push ecx",
+        "0x004e34e7: fnstsw word ptr [ebp - 4]",
+        "0x004e34ea: fnclex",
+        "0x004e34ec: cmp dword ptr [0x7b1d2c], 0",
+        "0x004e34f3: je 0x4e357b",
+        "0x004e34f9: mov al, byte ptr [ebp - 4]",
+        "0x004e34fc: xor edx, edx"
+      ],
+      "notes": "Clears sticky exception bits (0..5, 7) in `ctx.fpu_sw` and returns prior exception status in EAX."
+    },
+    {
+      "va": "0x004e3b12",
+      "va_int": 5126930,
+      "c_symbol": "hle_crt_004e3b12",
+      "name": "toupper",
+      "signature": "int __cdecl toupper(int c)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:c:i32"
+      ],
+      "returns": "eax:i32",
+      "category": "ctype",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x004c20a7"
+      ],
+      "disasm_head": [
+        "0x004e3b12: cmp dword ptr [0x55393c], 0",
+        "0x004e3b19: jne 0x4e3b2b",
+        "0x004e3b1b: mov eax, dword ptr [esp + 4]",
+        "0x004e3b1f: lea ecx, [eax - 0x61]",
+        "0x004e3b22: cmp ecx, 0x19",
+        "0x004e3b25: ja 0x4e3b38",
+        "0x004e3b27: add eax, -0x20",
+        "0x004e3b2a: ret",
+        "0x004e3b2b: push 0",
+        "0x004e3b2d: push dword ptr [esp + 8]"
+      ],
+      "notes": "ASCII 'a'..'z' -> 'A'..'Z' conversion; returns result in EAX."
+    },
+    {
+      "va": "0x004e3e1b",
+      "va_int": 5127707,
+      "c_symbol": "hle_crt_004e3e1b",
+      "name": "_CxxThrowException",
+      "signature": "void __stdcall _CxxThrowException(void* pExceptionObject, const void* pThrowInfo)",
+      "calling_convention": "stdcall",
+      "stack_cleanup": 8,
+      "ret_pop_total": 12,
+      "params": [
+        "stack+4:pExceptionObject:ptr",
+        "stack+8:pThrowInfo:ptr"
+      ],
+      "returns": "void",
+      "category": "eh_rtti",
+      "game_call_sites": 69,
+      "sample_call_sites": [
+        "0x00407be6",
+        "0x0040816b",
+        "0x004081ce",
+        "0x00411235",
+        "0x004112a3"
+      ],
+      "disasm_head": [
+        "0x004e3e1b: push ebp",
+        "0x004e3e1c: mov ebp, esp",
+        "0x004e3e1e: sub esp, 0x20",
+        "0x004e3e21: mov eax, dword ptr [ebp + 8]",
+        "0x004e3e24: push esi",
+        "0x004e3e25: push edi",
+        "0x004e3e26: push 8",
+        "0x004e3e28: pop ecx",
+        "0x004e3e29: mov esi, 0x51beb8",
+        "0x004e3e2e: lea edi, [ebp - 0x20]"
+      ],
+      "notes": "Logs C++ exception throw (type info VA + object VA) and either unwinds via C++ exception or handles cleanly without crashing; ret 8."
+    },
+    {
+      "va": "0x004e422c",
+      "va_int": 5128748,
+      "c_symbol": "hle_crt_004e422c",
+      "name": "__EH_prolog3",
+      "signature": "void __cdecl __EH_prolog3(void)",
+      "calling_convention": "custom_stack",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "eax:handler:va",
+        "stack+4:frame_size:u32"
+      ],
+      "returns": "void",
+      "category": "eh_rtti",
+      "game_call_sites": 2,
+      "sample_call_sites": [
+        "0x004de4d1",
+        "0x004de510"
+      ],
+      "disasm_head": [
+        "0x004e422c: push eax",
+        "0x004e422d: push dword ptr fs:[0]",
+        "0x004e4234: lea eax, [esp + 0xc]",
+        "0x004e4238: sub esp, dword ptr [esp + 0xc]",
+        "0x004e423c: push ebx",
+        "0x004e423d: push esi",
+        "0x004e423e: push edi",
+        "0x004e423f: mov dword ptr [eax], ebp",
+        "0x004e4241: mov ebp, eax",
+        "0x004e4243: mov eax, dword ptr [0x54b458]"
+      ],
+      "notes": "MSVC8 EH frame setup: caller pushes frame_size and sets EAX=handler; sets EBP=old_esp+4, saves old EBP at [EBP], [EBP-4]=-1, [EBP-8]=handler, [EBP-12]=old fs_0, fs_0=EBP-12, allocates frame_size + saved ebx/esi/edi + cookie, pops retaddr."
+    },
+    {
+      "va": "0x004e6340",
+      "va_int": 5137216,
+      "c_symbol": "hle_crt_004e6340",
+      "name": "memset",
+      "signature": "void* __cdecl memset(void* dest, int c, size_t count)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:dest:ptr",
+        "stack+8:c:i32",
+        "stack+12:count:u32"
+      ],
+      "returns": "eax:ptr",
+      "category": "memory",
+      "game_call_sites": 216,
+      "sample_call_sites": [
+        "0x00401078",
+        "0x004012cc",
+        "0x0040134a",
+        "0x004019d3",
+        "0x00401c9b"
+      ],
+      "disasm_head": [
+        "0x004e6340: mov edx, dword ptr [esp + 0xc]",
+        "0x004e6344: mov ecx, dword ptr [esp + 4]",
+        "0x004e6348: test edx, edx",
+        "0x004e634a: je 0x4e63b5",
+        "0x004e634c: xor eax, eax",
+        "0x004e634e: mov al, byte ptr [esp + 8]",
+        "0x004e6352: test al, al",
+        "0x004e6354: jne 0x4e636c",
+        "0x004e6356: cmp edx, 0x100",
+        "0x004e635c: jb 0x4e636c"
+      ],
+      "notes": "Fills `count` bytes at `dest` with `(uint8_t)c`; returns `dest` in EAX."
+    },
+    {
+      "va": "0x004e63c0",
+      "va_int": 5137344,
+      "c_symbol": "hle_crt_004e63c0",
+      "name": "memcpy",
+      "signature": "void* __cdecl memcpy(void* dest, const void* src, size_t count)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:dest:ptr",
+        "stack+8:src:ptr",
+        "stack+12:count:u32"
+      ],
+      "returns": "eax:ptr",
+      "category": "memory",
+      "game_call_sites": 70,
+      "sample_call_sites": [
+        "0x00401994",
+        "0x00401aac",
+        "0x00401ae5",
+        "0x00401bfe",
+        "0x00401d64"
+      ],
+      "disasm_head": [
+        "0x004e63c0: push ebp",
+        "0x004e63c1: mov ebp, esp",
+        "0x004e63c3: push edi",
+        "0x004e63c4: push esi",
+        "0x004e63c5: mov esi, dword ptr [ebp + 0xc]",
+        "0x004e63c8: mov ecx, dword ptr [ebp + 0x10]",
+        "0x004e63cb: mov edi, dword ptr [ebp + 8]",
+        "0x004e63ce: mov eax, ecx",
+        "0x004e63d0: mov edx, ecx",
+        "0x004e63d2: add eax, esi"
+      ],
+      "notes": "Copies `count` bytes from `src` to `dest` (uses memmove semantics to match VC8 overlap branch); returns `dest` in EAX."
+    },
+    {
+      "va": "0x004eae60",
+      "va_int": 5156448,
+      "c_symbol": "hle_crt_004eae60",
+      "name": "_alldiv",
+      "signature": "int64_t __stdcall _alldiv(int64_t a, int64_t b)",
+      "calling_convention": "stdcall",
+      "stack_cleanup": 16,
+      "ret_pop_total": 20,
+      "params": [
+        "stack+4:a:i64",
+        "stack+12:b:i64"
+      ],
+      "returns": "edx_eax:i64",
+      "category": "int64",
+      "game_call_sites": 8,
+      "sample_call_sites": [
+        "0x0049d7ae",
+        "0x0049d7fd",
+        "0x0049d87d",
+        "0x0049d8cf",
+        "0x0049dcf4"
+      ],
+      "disasm_head": [
+        "0x004eae60: push edi",
+        "0x004eae61: push esi",
+        "0x004eae62: push ebx",
+        "0x004eae63: xor edi, edi",
+        "0x004eae65: mov eax, dword ptr [esp + 0x14]",
+        "0x004eae69: or eax, eax",
+        "0x004eae6b: jge 0x4eae81",
+        "0x004eae6d: inc edi",
+        "0x004eae6e: mov edx, dword ptr [esp + 0x10]",
+        "0x004eae72: neg eax"
+      ],
+      "notes": "Signed 64-bit division a / b (truncating toward zero); result in EDX:EAX; pops 16 bytes (ret 0x10)."
+    },
+    {
+      "va": "0x004eaf10",
+      "va_int": 5156624,
+      "c_symbol": "hle_crt_004eaf10",
+      "name": "_allrem",
+      "signature": "int64_t __stdcall _allrem(int64_t a, int64_t b)",
+      "calling_convention": "stdcall",
+      "stack_cleanup": 16,
+      "ret_pop_total": 20,
+      "params": [
+        "stack+4:a:i64",
+        "stack+12:b:i64"
+      ],
+      "returns": "edx_eax:i64",
+      "category": "int64",
+      "game_call_sites": 2,
+      "sample_call_sites": [
+        "0x004a7ad9",
+        "0x004a7b28"
+      ],
+      "disasm_head": [
+        "0x004eaf10: push ebx",
+        "0x004eaf11: push edi",
+        "0x004eaf12: xor edi, edi",
+        "0x004eaf14: mov eax, dword ptr [esp + 0x10]",
+        "0x004eaf18: or eax, eax",
+        "0x004eaf1a: jge 0x4eaf30",
+        "0x004eaf1c: inc edi",
+        "0x004eaf1d: mov edx, dword ptr [esp + 0xc]",
+        "0x004eaf21: neg eax",
+        "0x004eaf23: neg edx"
+      ],
+      "notes": "Signed 64-bit remainder a % b; result in EDX:EAX; pops 16 bytes (ret 0x10)."
+    },
+    {
+      "va": "0x004edba0",
+      "va_int": 5168032,
+      "c_symbol": "hle_crt_004edba0",
+      "name": "_allmul",
+      "signature": "int64_t __stdcall _allmul(int64_t a, int64_t b)",
+      "calling_convention": "stdcall",
+      "stack_cleanup": 16,
+      "ret_pop_total": 20,
+      "params": [
+        "stack+4:a:i64",
+        "stack+12:b:i64"
+      ],
+      "returns": "edx_eax:i64",
+      "category": "int64",
+      "game_call_sites": 5,
+      "sample_call_sites": [
+        "0x0049d799",
+        "0x0049d89b",
+        "0x0049d8c2",
+        "0x0049dc4e",
+        "0x004a7aa8"
+      ],
+      "disasm_head": [
+        "0x004edba0: mov eax, dword ptr [esp + 8]",
+        "0x004edba4: mov ecx, dword ptr [esp + 0x10]",
+        "0x004edba8: or ecx, eax",
+        "0x004edbaa: mov ecx, dword ptr [esp + 0xc]",
+        "0x004edbae: jne 0x4edbb9",
+        "0x004edbb0: mov eax, dword ptr [esp + 4]",
+        "0x004edbb4: mul ecx",
+        "0x004edbb6: ret 0x10",
+        "0x004edbb9: push ebx",
+        "0x004edbba: mul ecx"
+      ],
+      "notes": "64-bit integer multiplication a * b; low 64 bits in EDX:EAX; pops 16 bytes (ret 0x10)."
+    },
+    {
+      "va": "0x004efab0",
+      "va_int": 5175984,
+      "c_symbol": "hle_crt_004efab0",
+      "name": "__alloca_probe",
+      "signature": "void __cdecl __chkstk(void)",
+      "calling_convention": "custom_stack",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "eax:size:u32"
+      ],
+      "returns": "eax:u32",
+      "category": "stack",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x0049d6a5"
+      ],
+      "disasm_head": [
+        "0x004efab0: push ecx",
+        "0x004efab1: lea ecx, [esp + 4]",
+        "0x004efab5: sub ecx, eax",
+        "0x004efab7: sbb eax, eax",
+        "0x004efab9: not eax",
+        "0x004efabb: and ecx, eax",
+        "0x004efabd: mov eax, esp",
+        "0x004efabf: and eax, 0xfffff000",
+        "0x004efac4: cmp ecx, eax",
+        "0x004efac6: jb 0x4efad2"
+      ],
+      "notes": "Stack probe helper: pops retaddr into EAX, subtracts original EAX (`size`) from ESP (ESP = old_esp_after_ret - size), preserves ECX."
+    },
+    {
+      "va": "0x004f0a50",
+      "va_int": 5179984,
+      "c_symbol": "hle_crt_004f0a50",
+      "name": "_alldvrm",
+      "signature": "void __stdcall _alldvrm(int64_t a, int64_t b)",
+      "calling_convention": "stdcall",
+      "stack_cleanup": 16,
+      "ret_pop_total": 20,
+      "params": [
+        "stack+4:a:i64",
+        "stack+12:b:i64"
+      ],
+      "returns": "edx_eax:quot_i64,ebx_ecx:rem_i64",
+      "category": "int64",
+      "game_call_sites": 2,
+      "sample_call_sites": [
+        "0x004ba7c4",
+        "0x004ba92c"
+      ],
+      "disasm_head": [
+        "0x004f0a50: push edi",
+        "0x004f0a51: push esi",
+        "0x004f0a52: push ebp",
+        "0x004f0a53: xor edi, edi",
+        "0x004f0a55: xor ebp, ebp",
+        "0x004f0a57: mov eax, dword ptr [esp + 0x14]",
+        "0x004f0a5b: or eax, eax",
+        "0x004f0a5d: jge 0x4f0a74",
+        "0x004f0a5f: inc edi",
+        "0x004f0a60: inc ebp"
+      ],
+      "notes": "Signed 64-bit divmod: quotient (a / b) in EDX:EAX, remainder (a % b) in EBX:ECX; pops 16 bytes (ret 0x10)."
+    },
+    {
+      "va": "0x004f1ece",
+      "va_int": 5185230,
+      "c_symbol": "hle_crt_004f1ece",
+      "name": "DirectSoundCreate8_thunk",
+      "signature": "HRESULT __stdcall DirectSoundCreate8(LPCGUID pcGuidDevice, LPDIRECTSOUND8* ppDS8, LPUNKNOWN pUnkOuter)",
+      "calling_convention": "stdcall",
+      "stack_cleanup": 12,
+      "ret_pop_total": 16,
+      "params": [
+        "stack+4:pcGuidDevice:ptr",
+        "stack+8:ppDS8:ptr",
+        "stack+12:pUnkOuter:ptr"
+      ],
+      "returns": "eax:u32",
+      "category": "dsound_thunk",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x0040e5cc"
+      ],
+      "disasm_head": [
+        "0x004f1ece: jmp dword ptr [0x51b008]",
+        "0x004f1ed4: int3",
+        "0x004f1ed5: int3",
+        "0x004f1ed6: int3",
+        "0x004f1ed7: int3",
+        "0x004f1ed8: int3",
+        "0x004f1ed9: int3",
+        "0x004f1eda: int3",
+        "0x004f1edb: int3",
+        "0x004f1edc: int3"
+      ],
+      "notes": "Jumps through IAT 0x0051b008 (DSOUND.dll!ord_11); delegate directly to hle_iat_call(ctx, mem, 0x0051b008u)."
+    },
+    {
+      "va": "0x004f3170",
+      "va_int": 5190000,
+      "c_symbol": "hle_crt_004f3170",
+      "name": "ov_clear",
+      "signature": "int __cdecl ov_clear(OggVorbis_File* vf)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:vf:ptr"
+      ],
+      "returns": "eax:i32",
+      "category": "vorbis",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x00416e4c"
+      ],
+      "disasm_head": [
+        "0x004f3170: push esi",
+        "0x004f3171: mov esi, dword ptr [esp + 8]",
+        "0x004f3175: test esi, esi",
+        "0x004f3177: je 0x4f3271",
+        "0x004f317d: lea eax, [esi + 0x250]",
+        "0x004f3183: push eax",
+        "0x004f3184: call 0x4f83b0",
+        "0x004f3189: lea ecx, [esi + 0x1e0]",
+        "0x004f318f: push ecx",
+        "0x004f3190: call 0x4f8890"
+      ],
+      "notes": "Statically-linked libvorbisfile ov_clear(vf): closes Vorbis decoder handle associated with guest `vf` VA (calls close callback if open) and zeroes struct; returns 0."
+    },
+    {
+      "va": "0x004f32f0",
+      "va_int": 5190384,
+      "c_symbol": "hle_crt_004f32f0",
+      "name": "ov_time_total",
+      "signature": "double __cdecl ov_time_total(OggVorbis_File* vf, int i)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:vf:ptr",
+        "stack+8:i:i32"
+      ],
+      "returns": "st0:f64",
+      "category": "vorbis",
+      "game_call_sites": 3,
+      "sample_call_sites": [
+        "0x0040edac",
+        "0x00416da9",
+        "0x00416e08"
+      ],
+      "disasm_head": [
+        "0x004f32f0: push ebp",
+        "0x004f32f1: mov ebp, esp",
+        "0x004f32f3: and esp, 0xfffffff8",
+        "0x004f32f6: sub esp, 8",
+        "0x004f32f9: push esi",
+        "0x004f32fa: push edi",
+        "0x004f32fb: mov edi, dword ptr [ebp + 8]",
+        "0x004f32fe: cmp dword ptr [edi + 0x58], 2",
+        "0x004f3302: jl 0x4f3362",
+        "0x004f3304: cmp dword ptr [edi + 4], 0"
+      ],
+      "notes": "Statically-linked libvorbisfile ov_time_total(vf, i): returns total duration in seconds pushed onto x87 `st(0)` (`OV_EINVAL`=-131.0 on error)."
+    },
+    {
+      "va": "0x004f41a0",
+      "va_int": 5194144,
+      "c_symbol": "hle_crt_004f41a0",
+      "name": "ov_time_seek",
+      "signature": "int __cdecl ov_time_seek(OggVorbis_File* vf, double pos)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:vf:ptr",
+        "stack+8:pos:f64"
+      ],
+      "returns": "eax:i32",
+      "category": "vorbis",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x00416f16"
+      ],
+      "disasm_head": [
+        "0x004f41a0: push ebp",
+        "0x004f41a1: mov ebp, esp",
+        "0x004f41a3: and esp, 0xfffffff8",
+        "0x004f41a6: sub esp, 0x14",
+        "0x004f41a9: fldz",
+        "0x004f41ab: push ebx",
+        "0x004f41ac: mov ebx, dword ptr [ebp + 8]",
+        "0x004f41af: fld st(0)",
+        "0x004f41b1: push esi",
+        "0x004f41b2: fst qword ptr [esp + 0x14]"
+      ],
+      "notes": "Statically-linked libvorbisfile ov_time_seek(vf, pos): seeks Vorbis stream to `pos` seconds; returns 0 on success."
+    },
+    {
+      "va": "0x004f4290",
+      "va_int": 5194384,
+      "c_symbol": "hle_crt_004f4290",
+      "name": "ov_info",
+      "signature": "vorbis_info* __cdecl ov_info(OggVorbis_File* vf, int link)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:vf:ptr",
+        "stack+8:link:i32"
+      ],
+      "returns": "eax:ptr",
+      "category": "vorbis",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x00416d63"
+      ],
+      "disasm_head": [
+        "0x004f4290: mov ecx, dword ptr [esp + 4]",
+        "0x004f4294: cmp dword ptr [ecx + 4], 0",
+        "0x004f4298: je 0x4f42ba",
+        "0x004f429a: mov eax, dword ptr [esp + 8]",
+        "0x004f429e: test eax, eax",
+        "0x004f42a0: jge 0x4f42b2",
+        "0x004f42a2: cmp dword ptr [ecx + 0x58], 3",
+        "0x004f42a6: jl 0x4f42ba",
+        "0x004f42a8: mov eax, dword ptr [ecx + 0x60]",
+        "0x004f42ab: shl eax, 5"
+      ],
+      "notes": "Statically-linked libvorbisfile ov_info(vf, link): returns guest VA of `vorbis_info` (version, channels@+4, rate@+8) inside/backing `vf`."
+    },
+    {
+      "va": "0x004f4620",
+      "va_int": 5195296,
+      "c_symbol": "hle_crt_004f4620",
+      "name": "ov_read",
+      "signature": "long __cdecl ov_read(OggVorbis_File* vf, char* buffer, int length, int bigendianp, int word, int sgned, int* bitstream)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:vf:ptr",
+        "stack+8:buffer:ptr",
+        "stack+12:length:i32",
+        "stack+16:bigendianp:i32",
+        "stack+20:word:i32",
+        "stack+24:sgned:i32",
+        "stack+28:bitstream:ptr"
+      ],
+      "returns": "eax:i32",
+      "category": "vorbis",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x00416ef0"
+      ],
+      "disasm_head": [
+        "0x004f4620: mov eax, dword ptr [esp + 0x1c]",
+        "0x004f4624: mov ecx, dword ptr [esp + 0x18]",
+        "0x004f4628: mov edx, dword ptr [esp + 0x14]",
+        "0x004f462c: push 0",
+        "0x004f462e: push 0",
+        "0x004f4630: push eax",
+        "0x004f4631: mov eax, dword ptr [esp + 0x1c]",
+        "0x004f4635: push ecx",
+        "0x004f4636: mov ecx, dword ptr [esp + 0x1c]",
+        "0x004f463a: push edx"
+      ],
+      "notes": "Statically-linked libvorbisfile ov_read(...): decodes up to `length` PCM bytes into guest `buffer`; returns byte count (>0), 0 on EOF, <0 on error."
+    },
+    {
+      "va": "0x004f49a0",
+      "va_int": 5196192,
+      "c_symbol": "hle_crt_004f49a0",
+      "name": "ov_open_callbacks",
+      "signature": "int __cdecl ov_open_callbacks(void* datasource, OggVorbis_File* vf, const char* initial, long ibytes, ov_callbacks callbacks)",
+      "calling_convention": "cdecl",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "stack+4:datasource:ptr",
+        "stack+8:vf:ptr",
+        "stack+12:initial:ptr",
+        "stack+16:ibytes:i32",
+        "stack+20:cb_read:va",
+        "stack+24:cb_seek:va",
+        "stack+28:cb_close:va",
+        "stack+32:cb_tell:va"
+      ],
+      "returns": "eax:i32",
+      "category": "vorbis",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x00416d47"
+      ],
+      "disasm_head": [
+        "0x004f49a0: mov ecx, dword ptr [esp + 0x14]",
+        "0x004f49a4: mov edx, dword ptr [esp + 0x18]",
+        "0x004f49a8: push esi",
+        "0x004f49a9: mov esi, dword ptr [esp + 0xc]",
+        "0x004f49ad: sub esp, 0x10",
+        "0x004f49b0: mov eax, esp",
+        "0x004f49b2: mov dword ptr [eax], ecx",
+        "0x004f49b4: mov ecx, dword ptr [esp + 0x30]",
+        "0x004f49b8: mov dword ptr [eax + 4], edx",
+        "0x004f49bb: mov edx, dword ptr [esp + 0x34]"
+      ],
+      "notes": "Statically-linked libvorbisfile ov_open_callbacks(...): `ov_callbacks` is passed by value (4 guest fn ptrs at [esp+20..32]); reads Ogg stream via guest callbacks (`call_indirect`) into decoder state mapped to `vf`."
+    },
+    {
+      "va": "0x004f49f0",
+      "va_int": 5196272,
+      "c_symbol": "hle_crt_004f49f0",
+      "name": "_ftol2_sse",
+      "signature": "int64_t __cdecl _ftol2_sse(void)",
+      "calling_convention": "custom_x87",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "st0:f64"
+      ],
+      "returns": "edx_eax:i64",
+      "category": "float",
+      "game_call_sites": 535,
+      "sample_call_sites": [
+        "0x00405d17",
+        "0x00405d2b",
+        "0x0040751e",
+        "0x0040753b",
+        "0x0040755a"
+      ],
+      "disasm_head": [
+        "0x004f49f0: cmp dword ptr [0x7b1d2c], 0",
+        "0x004f49f7: je 0x4f4a26",
+        "0x004f49f9: push ebp",
+        "0x004f49fa: mov ebp, esp",
+        "0x004f49fc: sub esp, 8",
+        "0x004f49ff: and esp, 0xfffffff8",
+        "0x004f4a02: fstp qword ptr [esp]",
+        "0x004f4a05: cvttsd2si eax, qword ptr [esp]",
+        "0x004f4a0a: leave",
+        "0x004f4a0b: ret"
+      ],
+      "notes": "Truncates `st(0)` toward zero (`cvttsd2si` / `fistp`), pops `st(0)`, writes 32-bit signed int to EAX (and sign-extended/64-bit EDX when outside int32)."
+    },
+    {
+      "va": "0x004f4a26",
+      "va_int": 5196326,
+      "c_symbol": "hle_crt_004f4a26",
+      "name": "_ftol2",
+      "signature": "int64_t __cdecl _ftol2(void)",
+      "calling_convention": "custom_x87",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "st0:f64"
+      ],
+      "returns": "edx_eax:i64",
+      "category": "float",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x00412d67"
+      ],
+      "disasm_head": [
+        "0x004f4a26: push ebp",
+        "0x004f4a27: mov ebp, esp",
+        "0x004f4a29: sub esp, 0x20",
+        "0x004f4a2c: and esp, 0xfffffff0",
+        "0x004f4a2f: fld st(0)",
+        "0x004f4a31: fst dword ptr [esp + 0x18]",
+        "0x004f4a35: fistp qword ptr [esp + 0x10]",
+        "0x004f4a39: fild qword ptr [esp + 0x10]",
+        "0x004f4a3d: mov edx, dword ptr [esp + 0x18]",
+        "0x004f4a41: mov eax, dword ptr [esp + 0x10]"
+      ],
+      "notes": "Truncates `st(0)` toward zero to 64-bit signed integer in EDX:EAX and pops `st(0)`."
+    },
+    {
+      "va": "0x0050e1d0",
+      "va_int": 5300688,
+      "c_symbol": "hle_crt_0050e1d0",
+      "name": "_CIatan",
+      "signature": "void __cdecl _CIatan(void)",
+      "calling_convention": "custom_x87",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "st0:f64"
+      ],
+      "returns": "st0:f64",
+      "category": "math",
+      "game_call_sites": 2,
+      "sample_call_sites": [
+        "0x00420386",
+        "0x004203f7"
+      ],
+      "disasm_head": [
+        "0x0050e1d0: cmp dword ptr [0x7b1d28], 0",
+        "0x0050e1d7: je 0x50e20b",
+        "0x0050e1d9: sub esp, 8",
+        "0x0050e1dc: stmxcsr dword ptr [esp + 4]",
+        "0x0050e1e1: mov eax, dword ptr [esp + 4]",
+        "0x0050e1e5: and eax, 0x1f80",
+        "0x0050e1ea: cmp eax, 0x1f80",
+        "0x0050e1ef: jne 0x50e200",
+        "0x0050e1f1: fnstcw word ptr [esp]",
+        "0x0050e1f4: mov ax, word ptr [esp]"
+      ],
+      "notes": "MSVC CRT x87 intrinsic: replaces `st(0)` in-place with `std::atan(st(0))` (net x87 stack change 0)."
+    },
+    {
+      "va": "0x0050e2b0",
+      "va_int": 5300912,
+      "c_symbol": "hle_crt_0050e2b0",
+      "name": "_CIsqrt",
+      "signature": "void __cdecl _CIsqrt(void)",
+      "calling_convention": "custom_x87",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "st0:f64"
+      ],
+      "returns": "st0:f64",
+      "category": "math",
+      "game_call_sites": 9,
+      "sample_call_sites": [
+        "0x004202df",
+        "0x0042056e",
+        "0x0042060d",
+        "0x0042066e",
+        "0x004206fd"
+      ],
+      "disasm_head": [
+        "0x0050e2b0: sub esp, 0xc",
+        "0x0050e2b3: fst qword ptr [esp]",
+        "0x0050e2b6: call 0x50f678",
+        "0x0050e2bb: call 0x50e2cd",
+        "0x0050e2c0: add esp, 0xc",
+        "0x0050e2c3: ret",
+        "0x0050e2c4: lea edx, [esp + 4]",
+        "0x0050e2c8: call 0x50f635",
+        "0x0050e2cd: push edx",
+        "0x0050e2ce: wait"
+      ],
+      "notes": "MSVC CRT x87 intrinsic: replaces `st(0)` in-place with `std::sqrt(st(0))` (net x87 stack change 0)."
+    },
+    {
+      "va": "0x0050e8d0",
+      "va_int": 5302480,
+      "c_symbol": "hle_crt_0050e8d0",
+      "name": "_CIpow",
+      "signature": "void __cdecl _CIpow(void)",
+      "calling_convention": "custom_x87",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "st1:f64",
+        "st0:f64"
+      ],
+      "returns": "st0:f64",
+      "category": "math",
+      "game_call_sites": 2,
+      "sample_call_sites": [
+        "0x0042063b",
+        "0x0042064d"
+      ],
+      "disasm_head": [
+        "0x0050e8d0: cmp dword ptr [0x7b1d28], 0",
+        "0x0050e8d7: je 0x50e90b",
+        "0x0050e8d9: sub esp, 8",
+        "0x0050e8dc: stmxcsr dword ptr [esp + 4]",
+        "0x0050e8e1: mov eax, dword ptr [esp + 4]",
+        "0x0050e8e5: and eax, 0x1f80",
+        "0x0050e8ea: cmp eax, 0x1f80",
+        "0x0050e8ef: jne 0x50e900",
+        "0x0050e8f1: fnstcw word ptr [esp]",
+        "0x0050e8f4: mov ax, word ptr [esp]"
+      ],
+      "notes": "MSVC CRT x87 intrinsic: pops `exp = fpu_pop()`, reads `base = st(0)`, writes `std::pow(base, exp)` into new `st(0)` (net x87 stack pop 1)."
+    },
+    {
+      "va": "0x0050eb60",
+      "va_int": 5303136,
+      "c_symbol": "hle_crt_0050eb60",
+      "name": "_CIsin",
+      "signature": "void __cdecl _CIsin(void)",
+      "calling_convention": "custom_x87",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "st0:f64"
+      ],
+      "returns": "st0:f64",
+      "category": "math",
+      "game_call_sites": 18,
+      "sample_call_sites": [
+        "0x0041747c",
+        "0x0041aeab",
+        "0x004204c2",
+        "0x00436089",
+        "0x004621e3"
+      ],
+      "disasm_head": [
+        "0x0050eb60: cmp dword ptr [0x7b1d28], 0",
+        "0x0050eb67: je 0x50eb9b",
+        "0x0050eb69: sub esp, 8",
+        "0x0050eb6c: stmxcsr dword ptr [esp + 4]",
+        "0x0050eb71: mov eax, dword ptr [esp + 4]",
+        "0x0050eb75: and eax, 0x1f80",
+        "0x0050eb7a: cmp eax, 0x1f80",
+        "0x0050eb7f: jne 0x50eb90",
+        "0x0050eb81: fnstcw word ptr [esp]",
+        "0x0050eb84: mov ax, word ptr [esp]"
+      ],
+      "notes": "MSVC CRT x87 intrinsic: replaces `st(0)` in-place with `std::sin(st(0))` (net x87 stack change 0)."
+    },
+    {
+      "va": "0x0050ec90",
+      "va_int": 5303440,
+      "c_symbol": "hle_crt_0050ec90",
+      "name": "_CIcos",
+      "signature": "void __cdecl _CIcos(void)",
+      "calling_convention": "custom_x87",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "st0:f64"
+      ],
+      "returns": "st0:f64",
+      "category": "math",
+      "game_call_sites": 10,
+      "sample_call_sites": [
+        "0x0042023c",
+        "0x00420270",
+        "0x004204d4",
+        "0x00479e1e",
+        "0x00487565"
+      ],
+      "disasm_head": [
+        "0x0050ec90: cmp dword ptr [0x7b1d28], 0",
+        "0x0050ec97: je 0x50eccb",
+        "0x0050ec99: sub esp, 8",
+        "0x0050ec9c: stmxcsr dword ptr [esp + 4]",
+        "0x0050eca1: mov eax, dword ptr [esp + 4]",
+        "0x0050eca5: and eax, 0x1f80",
+        "0x0050ecaa: cmp eax, 0x1f80",
+        "0x0050ecaf: jne 0x50ecc0",
+        "0x0050ecb1: fnstcw word ptr [esp]",
+        "0x0050ecb4: mov ax, word ptr [esp]"
+      ],
+      "notes": "MSVC CRT x87 intrinsic: replaces `st(0)` in-place with `std::cos(st(0))` (net x87 stack change 0)."
+    },
+    {
+      "va": "0x0050edc0",
+      "va_int": 5303744,
+      "c_symbol": "hle_crt_0050edc0",
+      "name": "_CIacos",
+      "signature": "void __cdecl _CIacos(void)",
+      "calling_convention": "custom_x87",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "st0:f64"
+      ],
+      "returns": "st0:f64",
+      "category": "math",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x00420586"
+      ],
+      "disasm_head": [
+        "0x0050edc0: cmp dword ptr [0x7b1d28], 0",
+        "0x0050edc7: je 0x50edfb",
+        "0x0050edc9: sub esp, 8",
+        "0x0050edcc: stmxcsr dword ptr [esp + 4]",
+        "0x0050edd1: mov eax, dword ptr [esp + 4]",
+        "0x0050edd5: and eax, 0x1f80",
+        "0x0050edda: cmp eax, 0x1f80",
+        "0x0050eddf: jne 0x50edf0",
+        "0x0050ede1: fnstcw word ptr [esp]",
+        "0x0050ede4: mov ax, word ptr [esp]"
+      ],
+      "notes": "MSVC CRT x87 intrinsic: replaces `st(0)` in-place with `std::acos(st(0))` (net x87 stack change 0)."
+    },
+    {
+      "va": "0x00513030",
+      "va_int": 5320752,
+      "c_symbol": "hle_crt_00513030",
+      "name": "_CItan",
+      "signature": "void __cdecl _CItan(void)",
+      "calling_convention": "custom_x87",
+      "stack_cleanup": 0,
+      "ret_pop_total": 4,
+      "params": [
+        "st0:f64"
+      ],
+      "returns": "st0:f64",
+      "category": "math",
+      "game_call_sites": 1,
+      "sample_call_sites": [
+        "0x004c0a03"
+      ],
+      "disasm_head": [
+        "0x00513030: cmp dword ptr [0x7b1d28], 0",
+        "0x00513037: je 0x51306b",
+        "0x00513039: sub esp, 8",
+        "0x0051303c: stmxcsr dword ptr [esp + 4]",
+        "0x00513041: mov eax, dword ptr [esp + 4]",
+        "0x00513045: and eax, 0x1f80",
+        "0x0051304a: cmp eax, 0x1f80",
+        "0x0051304f: jne 0x513060",
+        "0x00513051: fnstcw word ptr [esp]",
+        "0x00513054: mov ax, word ptr [esp]"
+      ],
+      "notes": "MSVC CRT x87 intrinsic: replaces `st(0)` in-place with `std::tan(st(0))` (net x87 stack change 0)."
+    }
+  ]
+}
