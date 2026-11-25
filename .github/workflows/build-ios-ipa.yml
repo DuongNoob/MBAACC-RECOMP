@@ -39,7 +39,7 @@ jobs:
             fi
           done
           if [[ -z "${PROJECT_YML}" ]]; then
-            PROJECT_YML="$(find . -maxdepth 3 -path '*/ios/project.yml' -type f | head -n 1 || true)"
+            PROJECT_YML="$(find . -maxdepth 5 -path '*/ios/project.yml' -type f | head -n 1 || true)"
           fi
           if [[ -z "${PROJECT_YML}" ]]; then
             echo "ERROR: Could not find ios/project.yml inside repository workspace." >&2
