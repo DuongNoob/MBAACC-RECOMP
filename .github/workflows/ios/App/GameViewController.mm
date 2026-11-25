@@ -19,7 +19,7 @@
 @property (nonatomic, strong) UILabel* onboardingStatusLabel;
 @property (nonatomic, strong) UIView* pauseOverlayView;
 @property (nonatomic, strong) UITextView* pauseDebugTextView;
-@property (nonatomic, strong) UIButton* copyDebugButton;
+@property (nonatomic, strong) UIButton* debugCopyButton;
 
 @property (nonatomic, assign) BOOL assetsReady;
 @property (nonatomic, assign) BOOL engineStarted;
@@ -379,16 +379,16 @@
     [resumeBtn addTarget:self action:@selector(onResumeTapped) forControlEvents:UIControlEventTouchUpInside];
     [card addArrangedSubview:resumeBtn];
 
-    _copyDebugButton = [UIButton buttonWithType:UIButtonTypeSystem];
+    _debugCopyButton = [UIButton buttonWithType:UIButtonTypeSystem];
     UIButtonConfiguration* copyCfg = [UIButtonConfiguration filledButtonConfiguration];
     copyCfg.title = @"Copy Debug Log / Chép Log";
     copyCfg.baseBackgroundColor = [UIColor colorWithRed:0.16 green:0.46 blue:0.32 alpha:1.0];
     copyCfg.baseForegroundColor = [UIColor whiteColor];
     copyCfg.cornerStyle = UIButtonConfigurationCornerStyleMedium;
     copyCfg.contentInsets = NSDirectionalEdgeInsetsMake(8, 14, 8, 14);
-    _copyDebugButton.configuration = copyCfg;
-    [_copyDebugButton addTarget:self action:@selector(onCopyDebugLogTapped) forControlEvents:UIControlEventTouchUpInside];
-    [card addArrangedSubview:_copyDebugButton];
+    _debugCopyButton.configuration = copyCfg;
+    [_debugCopyButton addTarget:self action:@selector(onCopyDebugLogTapped) forControlEvents:UIControlEventTouchUpInside];
+    [card addArrangedSubview:_debugCopyButton];
 
     UIButton* trimBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     UIButtonConfiguration* trimCfg = [UIButtonConfiguration filledButtonConfiguration];
@@ -417,16 +417,16 @@
 - (void)onCopyDebugLogTapped {
     [self refreshPauseDebugSummary];
     [UIPasteboard generalPasteboard].string = _pauseDebugTextView.text ?: @"";
-    UIButtonConfiguration* cfg = _copyDebugButton.configuration;
+    UIButtonConfiguration* cfg = _debugCopyButton.configuration;
     cfg.title = @"Copied! / Đã chép";
-    _copyDebugButton.configuration = cfg;
+    _debugCopyButton.configuration = cfg;
     __weak GameViewController* weakSelf = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         GameViewController* strongSelf = weakSelf;
         if (!strongSelf) return;
-        UIButtonConfiguration* restore = strongSelf.copyDebugButton.configuration;
+        UIButtonConfiguration* restore = strongSelf.debugCopyButton.configuration;
         restore.title = @"Copy Debug Log / Chép Log";
-        strongSelf.copyDebugButton.configuration = restore;
+        strongSelf.debugCopyButton.configuration = restore;
     });
 }
 
