@@ -1,0 +1,87 @@
+name: Build iOS Unsigned IPA (ESign)
+
+on:
+  workflow_dispatch:
+    inputs:
+      configuration:
+        description: "Xcode build configuration"
+        required: true
+        default: "Release"
+        type: choice
+        options:
+          - Release
+          - Debug
+      build_gen_zip_url:
+        description: "Optional direct URL to build_gen.zip (if build_gen/ is not pushed to your private repo)"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  build-ipa:
+    name: Build Unsigned ARM64 IPA (macOS / Xcode)
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout private repository
+        uses: actions/checkout@v4
+
+      - name: Fetch optional build_gen.zip
+        if: ${{ inputs.build_gen_zip_url != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf build_gen build_gen_tmp
+          mkdir -p build_gen build_gen_tmp
+          curl -fsSL "${{ inputs.build_gen_zip_url }}" -o build_gen.zip
+          unzip -q build_gen.zip -d build_gen_tmp
+          if [[ -d build_gen_tmp/build_gen ]]; then
+            cp -R build_gen_tmp/build_gen/. build_gen/
+          else
+            cp -R build_gen_tmp/. build_gen/
+          fi
+          rm -rf build_gen.zip build_gen_tmp
+          ls -lh build_gen/
+
+      - name: Install XcodeGen
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v xcodegen >/dev/null 2>&1; then
+            brew install xcodegen
+          fi
+
+      - name: Show macOS & Xcode toolchain info
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodebuild -showsdks
+          xcodegen --version
+
+      - name: Build unsigned arm64 IPA
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p dist
+          chmod +x ios/build_unsigned_ipa.sh
+          BUILD_CONFIG="${{ inputs.configuration }}" bash ios/build_unsigned_ipa.sh 2>&1 | tee dist/xcodebuild.log
+
+      - name: Upload xcodebuild log (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: dist/xcodebuild.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload unsigned IPA for ESign
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MBAACC-unsigned-ipa
+          path: dist/MBAACC-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
