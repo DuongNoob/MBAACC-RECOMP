@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <type_traits>
 #include <utility>
@@ -15,6 +16,17 @@
 #include "mbaa_recomp/dispatch.h"
 #include "mbaa_recomp/hle_crt.h"
 #include "mbaa_recomp/hle_win32.h"
+
+namespace mbaa_recomp {
+inline constexpr uint32_t kFlagCF = CpuContext::kFlagCF;
+inline constexpr uint32_t kFlagPF = CpuContext::kFlagPF;
+inline constexpr uint32_t kFlagAF = CpuContext::kFlagAF;
+inline constexpr uint32_t kFlagZF = CpuContext::kFlagZF;
+inline constexpr uint32_t kFlagSF = CpuContext::kFlagSF;
+inline constexpr uint32_t kFlagIF = CpuContext::kFlagIF;
+inline constexpr uint32_t kFlagDF = CpuContext::kFlagDF;
+inline constexpr uint32_t kFlagOF = CpuContext::kFlagOF;
+} // namespace mbaa_recomp
 
 namespace mbaa_recomp::recomp_detail {
 
@@ -335,7 +347,10 @@ inline void update_flags_imul(CpuContext& ctx, uint64_t full) noexcept {
     constexpr uint32_t kBits2 = static_cast<uint32_t>(sizeof(T) * 16u);
     const T lo = static_cast<T>(full);
     const uint64_t ext = static_cast<uint64_t>(static_cast<int64_t>(static_cast<S>(lo)));
-    const uint64_t mask2 = (kBits2 >= 64u) ? ~0ULL : ((uint64_t{1} << kBits2) - 1ULL);
+    constexpr uint64_t mask2 = []() constexpr noexcept -> uint64_t {
+        if constexpr (kBits2 >= 64u) return ~0ULL;
+        else return (uint64_t{1} << kBits2) - 1ULL;
+    }();
     const bool ov = (ext & mask2) != (full & mask2);
     set_flag(ctx, kFlagCF, ov);
     set_flag(ctx, kFlagOF, ov);
@@ -481,6 +496,8 @@ inline void trap_halt(CpuContext& ctx, uint32_t va, const char* kind) noexcept {
 
 
 namespace mbaa_recomp {
+
+using recomp_detail::Cond;
 
 void sub_00401000(CpuContext& ctx, GuestMemory& mem);
 void sub_00401050(CpuContext& ctx, GuestMemory& mem);
