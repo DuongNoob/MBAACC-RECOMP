@@ -78,6 +78,7 @@ bool GuestMemory::init() {
         thread_stack_cursor_ = kThreadStackBase;
         active_allocs_.clear();
         free_blocks_.clear();
+        free_thread_stacks_.clear();
     }
     sections_.clear();
     last_error_.clear();
@@ -109,6 +110,7 @@ void GuestMemory::shutdown() {
     std::lock_guard<std::mutex> lock(alloc_mutex_);
     active_allocs_.clear();
     free_blocks_.clear();
+    free_thread_stacks_.clear();
     sections_.clear();
 }
 
@@ -506,14 +508,41 @@ uint32_t GuestMemory::alloc_thunk_block(uint32_t size, uint32_t align) {
 
 uint32_t GuestMemory::alloc_thread_stack() {
     if (base_ == nullptr) return 0;
-    std::lock_guard<std::mutex> lock(alloc_mutex_);
-    if (thread_stack_cursor_ + kThreadStackSize > kThreadStackLimit) {
-        return 0;
+    {
+        std::lock_guard<std::mutex> lock(alloc_mutex_);
+        if (!free_thread_stacks_.empty()) {
+            const uint32_t stack_bottom = free_thread_stacks_.back();
+            free_thread_stacks_.pop_back();
+            std::memset(base_ + stack_bottom, 0, kThreadStackSize);
+            return stack_bottom + kThreadStackSize - 0x100u;
+        }
+        if (thread_stack_cursor_ + kThreadStackSize <= kThreadStackLimit) {
+            const uint32_t stack_bottom = thread_stack_cursor_;
+            thread_stack_cursor_ += kThreadStackSize;
+            std::memset(base_ + stack_bottom, 0, kThreadStackSize);
+            return stack_bottom + kThreadStackSize - 0x100u;
+        }
     }
-    const uint32_t stack_bottom = thread_stack_cursor_;
-    thread_stack_cursor_ += kThreadStackSize;
-    std::memset(base_ + stack_bottom, 0, kThreadStackSize);
-    return stack_bottom + kThreadStackSize - 0x100u;
+    // Overflow fallback when more than 16 worker threads are simultaneously alive.
+    const uint32_t heap_buf = guest_alloc(kThreadStackSize, 16u);
+    if (heap_buf == 0u) return 0u;
+    std::memset(base_ + heap_buf, 0, kThreadStackSize);
+    return heap_buf + kThreadStackSize - 0x100u;
+}
+
+void GuestMemory::free_thread_stack(uint32_t initial_esp) {
+    if (base_ == nullptr || initial_esp < kThreadStackSize - 0x100u) return;
+    const uint32_t stack_bottom = initial_esp + 0x100u - kThreadStackSize;
+    if (stack_bottom >= kThreadStackBase &&
+        stack_bottom < kThreadStackLimit &&
+        ((stack_bottom - kThreadStackBase) % kThreadStackSize) == 0u) {
+        std::lock_guard<std::mutex> lock(alloc_mutex_);
+        free_thread_stacks_.push_back(stack_bottom);
+        return;
+    }
+    if (stack_bottom >= kHeapBase) {
+        guest_free(stack_bottom);
+    }
 }
 
 uint32_t GuestMemory::heap_used_bytes() const noexcept {

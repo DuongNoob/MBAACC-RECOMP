@@ -16,6 +16,7 @@ std::shared_mutex g_dispatch_mutex;
 std::unordered_map<uint32_t, RecompFn> g_fn_table;
 std::unordered_map<uint32_t, RecompFn> g_com_thunks;
 std::atomic<uint32_t> g_next_com_thunk{GuestMemory::kComThunkBase};
+std::atomic<uint32_t> g_unresolved_calls{0};
 
 } // namespace
 
@@ -53,11 +54,16 @@ void clear_dispatch_table() {
     g_fn_table.clear();
     g_com_thunks.clear();
     g_next_com_thunk.store(GuestMemory::kComThunkBase, std::memory_order_relaxed);
+    g_unresolved_calls.store(0u, std::memory_order_relaxed);
 }
 
 void call_indirect(CpuContext& ctx, GuestMemory& mem, uint32_t target_va) {
     if (target_va == 0u) {
-        std::fprintf(stderr, "[mbaa_recomp] call_indirect(0x00000000) from eip=0x%08x\n", ctx.eip);
+        const uint32_t cnt = g_unresolved_calls.fetch_add(1u, std::memory_order_relaxed) + 1u;
+        if (cnt <= 30u) {
+            hle_win32_log("[dispatch] call_indirect(0x00000000) eip=0x%08x esp=0x%08x (#%u)",
+                          ctx.eip, ctx.esp, cnt);
+        }
         ctx.ret_cdecl(mem);
         return;
     }
@@ -84,7 +90,11 @@ void call_indirect(CpuContext& ctx, GuestMemory& mem, uint32_t target_va) {
         return;
     }
 
-    std::fprintf(stderr, "[mbaa_recomp] unresolved call_indirect(0x%08x) esp=0x%08x\n", target_va, ctx.esp);
+    const uint32_t cnt = g_unresolved_calls.fetch_add(1u, std::memory_order_relaxed) + 1u;
+    if (cnt <= 30u) {
+        hle_win32_log("[dispatch] unresolved call_indirect(0x%08x) esp=0x%08x (#%u)",
+                      target_va, ctx.esp, cnt);
+    }
     ctx.ret_cdecl(mem);
 }
 

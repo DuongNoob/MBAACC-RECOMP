@@ -26,6 +26,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cctype>
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -141,9 +142,11 @@ struct FindState {
 };
 
 struct FileState {
+    std::mutex mtx;
     std::FILE* fp = nullptr;
     std::string path;
     bool writable = false;
+    uint32_t last_bytes_read = 0;
 };
 
 struct FontState {
@@ -256,6 +259,42 @@ uint32_t tick_ms() {
     const auto now = std::chrono::steady_clock::now();
     return static_cast<uint32_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(now - g_w32.boot_time).count());
+}
+
+struct DebugLogState {
+    std::mutex mtx;
+    std::FILE* fp = nullptr;
+    std::deque<std::string> ring;
+    uint32_t lines_written = 0;
+    std::atomic<uint32_t> missing_file_logs{0};
+    std::atomic<uint32_t> found_file_logs{0};
+    std::atomic<uint32_t> thread_spawn_count{0};
+    std::atomic<uint32_t> thread_fail_count{0};
+    std::atomic<uint32_t> destroy_window_calls{0};
+    std::atomic<uint32_t> dialog_box_calls{0};
+    std::atomic<int32_t>  cursor_display_count{0};
+};
+
+DebugLogState g_log;
+
+void append_debug_log_line(const char* text) {
+    if (!text) return;
+    char prefix[32] = {};
+    std::snprintf(prefix, sizeof(prefix), "[%ums] ", tick_ms());
+    std::string line = std::string(prefix) + text;
+    std::fprintf(stderr, "%s\n", line.c_str());
+
+    std::lock_guard<std::mutex> lock(g_log.mtx);
+    g_log.ring.push_back(line);
+    while (g_log.ring.size() > 32u) {
+        g_log.ring.pop_front();
+    }
+    if (g_log.fp != nullptr && g_log.lines_written < 2500u) {
+        std::fwrite(line.data(), 1u, line.size(), g_log.fp);
+        std::fputc('\n', g_log.fp);
+        std::fflush(g_log.fp);
+        ++g_log.lines_written;
+    }
 }
 
 std::string ascii_lower(std::string s) {
@@ -547,6 +586,11 @@ void k32_create_file_a(CpuContext& ctx, GuestMemory& mem) {
     bool exists = false;
     const fs::path resolved = resolve_asset_path(raw_name, want_write || create_new, &exists);
     if (resolved.empty() || (!exists && !create_new)) {
+        const uint32_t n = g_log.missing_file_logs.fetch_add(1u, std::memory_order_relaxed);
+        if (n < 40u) {
+            hle_win32_log("CreateFileA MISS #%u: '%s' -> '%s'",
+                          n + 1u, raw_name.c_str(), resolved.string().c_str());
+        }
         tls_last_error = kERROR_FILE_NOT_FOUND;
         ctx.eax = kINVALID_HANDLE_VALUE;
         ctx.ret_stdcall(mem, 28u);
@@ -565,10 +609,25 @@ void k32_create_file_a(CpuContext& ctx, GuestMemory& mem) {
 
     std::FILE* fp = std::fopen(resolved.string().c_str(), mode);
     if (!fp) {
+        const uint32_t n = g_log.missing_file_logs.fetch_add(1u, std::memory_order_relaxed);
+        if (n < 40u) {
+            hle_win32_log("CreateFileA FOPEN ERR #%u: '%s' -> '%s'",
+                          n + 1u, raw_name.c_str(), resolved.string().c_str());
+        }
         tls_last_error = kERROR_FILE_NOT_FOUND;
         ctx.eax = kINVALID_HANDLE_VALUE;
         ctx.ret_stdcall(mem, 28u);
         return;
+    }
+
+    const std::string low = ascii_lower(raw_name);
+    if (low.find(".p") != std::string::npos ||
+        low.find(".cfx") != std::string::npos ||
+        low.find(".ini") != std::string::npos) {
+        const uint32_t fn = g_log.found_file_logs.fetch_add(1u, std::memory_order_relaxed);
+        if (fn < 25u) {
+            hle_win32_log("CreateFileA OK #%u: '%s'", fn + 1u, raw_name.c_str());
+        }
     }
 
     auto fst = std::make_shared<FileState>();
@@ -599,12 +658,6 @@ void k32_read_file(CpuContext& ctx, GuestMemory& mem) {
         return;
     }
 
-    if (ovl_va != 0u) {
-        const uint64_t offset = static_cast<uint64_t>(mem.r32(ovl_va + 8u)) |
-                                (static_cast<uint64_t>(mem.r32(ovl_va + 12u)) << 32);
-        std::fseek(rec.file->fp, static_cast<long>(offset), SEEK_SET);
-    }
-
     uint8_t* dst = mem.ptr(buf_va);
     if (!dst || !mem.in_bounds(buf_va, to_read)) {
         tls_last_error = kERROR_INVALID_PARAMETER;
@@ -613,14 +666,54 @@ void k32_read_file(CpuContext& ctx, GuestMemory& mem) {
         return;
     }
 
-    const size_t n = (to_read > 0u) ? std::fread(dst, 1u, to_read, rec.file->fp) : 0u;
+    size_t n = 0u;
+    {
+        std::lock_guard<std::mutex> flk(rec.file->mtx);
+        if (ovl_va != 0u) {
+            const uint64_t offset = static_cast<uint64_t>(mem.r32(ovl_va + 8u)) |
+                                    (static_cast<uint64_t>(mem.r32(ovl_va + 12u)) << 32);
+#if !defined(_WIN32)
+            ::fseeko(rec.file->fp, static_cast<off_t>(offset), SEEK_SET);
+#else
+            ::_fseeki64(rec.file->fp, static_cast<int64_t>(offset), SEEK_SET);
+#endif
+        }
+        n = (to_read > 0u) ? std::fread(dst, 1u, to_read, rec.file->fp) : 0u;
+        rec.file->last_bytes_read = static_cast<uint32_t>(n);
+    }
+
     if (bytes_va != 0u) mem.w32(bytes_va, static_cast<uint32_t>(n));
     if (ovl_va != 0u) {
+        mem.w32(ovl_va + 0u, 0u); // Internal = STATUS_SUCCESS
+        mem.w32(ovl_va + 4u, static_cast<uint32_t>(n)); // InternalHigh = bytes transferred
         const uint32_t ev = mem.r32(ovl_va + 16u);
         if (ev) hle_win32_signal_event(ev);
     }
     ctx.eax = 1u;
     ctx.ret_stdcall(mem, 20u);
+}
+
+void k32_get_overlapped_result(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t h       = ctx.arg32(mem, 0);
+    const uint32_t ovl_va  = ctx.arg32(mem, 1);
+    const uint32_t xfer_va = ctx.arg32(mem, 2);
+
+    uint32_t transferred = 0u;
+    if (ovl_va != 0u && mem.in_bounds(ovl_va, 8u)) {
+        transferred = mem.r32(ovl_va + 4u);
+    }
+    if (transferred == 0u) {
+        HandleRecord rec;
+        if (get_handle(h, rec) && rec.kind == HandleKind::File && rec.file) {
+            std::lock_guard<std::mutex> flk(rec.file->mtx);
+            transferred = rec.file->last_bytes_read;
+        }
+    }
+    if (xfer_va != 0u && mem.in_bounds(xfer_va, 4u)) {
+        mem.w32(xfer_va, transferred);
+    }
+    ctx.eax = 1u;
+    ctx.ret_stdcall(mem, 16u);
 }
 
 void k32_write_file(CpuContext& ctx, GuestMemory& mem) {
@@ -645,8 +738,12 @@ void k32_write_file(CpuContext& ctx, GuestMemory& mem) {
         return;
     }
 
-    const size_t n = (to_write > 0u) ? std::fwrite(src, 1u, to_write, rec.file->fp) : 0u;
-    std::fflush(rec.file->fp);
+    size_t n = 0u;
+    {
+        std::lock_guard<std::mutex> flk(rec.file->mtx);
+        n = (to_write > 0u) ? std::fwrite(src, 1u, to_write, rec.file->fp) : 0u;
+        std::fflush(rec.file->fp);
+    }
     if (bytes_va != 0u) mem.w32(bytes_va, static_cast<uint32_t>(n));
     ctx.eax = 1u;
     ctx.ret_stdcall(mem, 20u);
@@ -676,13 +773,17 @@ void k32_set_file_pointer(CpuContext& ctx, GuestMemory& mem) {
         full = (static_cast<int64_t>(hi) << 32) | static_cast<uint32_t>(dist);
     }
 
+    int64_t pos = 0;
+    {
+        std::lock_guard<std::mutex> flk(rec.file->mtx);
 #if !defined(_WIN32)
-    ::fseeko(rec.file->fp, static_cast<off_t>(full), whence);
-    const int64_t pos = static_cast<int64_t>(::ftello(rec.file->fp));
+        ::fseeko(rec.file->fp, static_cast<off_t>(full), whence);
+        pos = static_cast<int64_t>(::ftello(rec.file->fp));
 #else
-    ::_fseeki64(rec.file->fp, full, whence);
-    const int64_t pos = ::_ftelli64(rec.file->fp);
+        ::_fseeki64(rec.file->fp, full, whence);
+        pos = ::_ftelli64(rec.file->fp);
 #endif
+    }
     if (hi_va != 0u) {
         mem.w32(hi_va, static_cast<uint32_t>(static_cast<uint64_t>(pos) >> 32));
     }
@@ -702,17 +803,21 @@ void k32_get_file_size(CpuContext& ctx, GuestMemory& mem) {
         return;
     }
 
+    int64_t sz = 0;
+    {
+        std::lock_guard<std::mutex> flk(rec.file->mtx);
 #if !defined(_WIN32)
-    const off_t cur = ::ftello(rec.file->fp);
-    ::fseeko(rec.file->fp, 0, SEEK_END);
-    const int64_t sz = static_cast<int64_t>(::ftello(rec.file->fp));
-    ::fseeko(rec.file->fp, cur, SEEK_SET);
+        const off_t cur = ::ftello(rec.file->fp);
+        ::fseeko(rec.file->fp, 0, SEEK_END);
+        sz = static_cast<int64_t>(::ftello(rec.file->fp));
+        ::fseeko(rec.file->fp, cur, SEEK_SET);
 #else
-    const int64_t cur = ::_ftelli64(rec.file->fp);
-    ::_fseeki64(rec.file->fp, 0, SEEK_END);
-    const int64_t sz = ::_ftelli64(rec.file->fp);
-    ::_fseeki64(rec.file->fp, cur, SEEK_SET);
+        const int64_t cur = ::_ftelli64(rec.file->fp);
+        ::_fseeki64(rec.file->fp, 0, SEEK_END);
+        sz = ::_ftelli64(rec.file->fp);
+        ::_fseeki64(rec.file->fp, cur, SEEK_SET);
 #endif
+    }
     if (hi_va != 0u) mem.w32(hi_va, static_cast<uint32_t>(static_cast<uint64_t>(sz) >> 32));
     ctx.eax = static_cast<uint32_t>(sz & 0xFFFFFFFFu);
     ctx.ret_stdcall(mem, 8u);
@@ -1160,8 +1265,12 @@ void k32_create_thread(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t param_va = ctx.arg32(mem, 3);
     const uint32_t tid_va   = ctx.arg32(mem, 5);
 
+    const uint32_t spawn_no = g_log.thread_spawn_count.fetch_add(1u, std::memory_order_relaxed) + 1u;
     const uint32_t child_esp = mem.alloc_thread_stack();
     if (start_va == 0u || child_esp == 0u) {
+        const uint32_t fails = g_log.thread_fail_count.fetch_add(1u, std::memory_order_relaxed) + 1u;
+        hle_win32_log("CreateThread FAILED #%u (spawn #%u): start=0x%08x esp=0x%08x",
+                      fails, spawn_no, start_va, child_esp);
         ctx.eax = 0u;
         ctx.ret_stdcall(mem, 24u);
         return;
@@ -1183,6 +1292,7 @@ void k32_create_thread(CpuContext& ctx, GuestMemory& mem) {
         tctx.push32(*mem_ptr, param_va);
         tctx.push32(*mem_ptr, 0x00FFFFF3u); // Sentinel return EIP
         call_indirect(tctx, *mem_ptr, start_va);
+        mem_ptr->free_thread_stack(child_esp);
         {
             std::lock_guard<std::mutex> lock(done_ev->mtx);
             done_ev->signaled = true;
@@ -1656,7 +1766,9 @@ void u32_post_thread_message_a(CpuContext& ctx, GuestMemory& mem) {
 }
 
 void u32_post_quit_message(CpuContext& ctx, GuestMemory& mem) {
-    g_w32.quit_code.store(static_cast<int>(ctx.arg32(mem, 0)), std::memory_order_relaxed);
+    const int code = static_cast<int>(ctx.arg32(mem, 0));
+    hle_win32_log("PostQuitMessage(%d)", code);
+    g_w32.quit_code.store(code, std::memory_order_relaxed);
     g_w32.quit_requested.store(true, std::memory_order_release);
     ctx.ret_stdcall(mem, 4u);
 }
@@ -1664,9 +1776,39 @@ void u32_post_quit_message(CpuContext& ctx, GuestMemory& mem) {
 void u32_message_box_a(CpuContext& ctx, GuestMemory& mem) {
     const std::string text  = mem.read_cstring(ctx.arg32(mem, 1));
     const std::string title = mem.read_cstring(ctx.arg32(mem, 2));
-    std::fprintf(stderr, "[Win32 MessageBoxA] [%s] %s\n", title.c_str(), text.c_str());
+    hle_win32_log("MessageBoxA [%s]: %s", title.c_str(), text.c_str());
     ctx.eax = kIDOK;
     ctx.ret_stdcall(mem, 16u);
+}
+
+void u32_destroy_window(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t hwnd = ctx.arg32(mem, 0);
+    const uint32_t cnt = g_log.destroy_window_calls.fetch_add(1u, std::memory_order_relaxed) + 1u;
+    if (cnt <= 3u) {
+        hle_win32_log("DestroyWindow(0x%08x) call #%u", hwnd, cnt);
+    }
+    ctx.eax = 1u;
+    ctx.ret_stdcall(mem, 4u);
+}
+
+void u32_dialog_box_param_a(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t dlg_id = ctx.arg32(mem, 1);
+    const uint32_t proc_va = ctx.arg32(mem, 3);
+    const uint32_t cnt = g_log.dialog_box_calls.fetch_add(1u, std::memory_order_relaxed) + 1u;
+    if (cnt <= 3u) {
+        hle_win32_log("DialogBoxParamA(res=%u, proc=0x%08x) call #%u -> IDOK", dlg_id, proc_va, cnt);
+    }
+    ctx.eax = kIDOK;
+    ctx.ret_stdcall(mem, 20u);
+}
+
+void u32_show_cursor(CpuContext& ctx, GuestMemory& mem) {
+    const bool show = ctx.arg32(mem, 0) != 0u;
+    const int32_t next = show
+        ? (g_log.cursor_display_count.fetch_add(1, std::memory_order_relaxed) + 1)
+        : (g_log.cursor_display_count.fetch_sub(1, std::memory_order_relaxed) - 1);
+    ctx.eax = static_cast<uint32_t>(next);
+    ctx.ret_stdcall(mem, 4u);
 }
 
 void u32_get_client_rect(CpuContext& ctx, GuestMemory& mem) {
@@ -2400,7 +2542,7 @@ constexpr IatDescriptor kIatTable[] = {
     {0x0051B090u, "KERNEL32.dll!ResetEvent", &k32_reset_event},
     {0x0051B094u, "KERNEL32.dll!SetFilePointer", &k32_set_file_pointer},
     {0x0051B098u, "KERNEL32.dll!FindNextFileA", &k32_find_next_file_a},
-    {0x0051B09Cu, "KERNEL32.dll!GetOverlappedResult", &win32_ret_val<16u, 1u>},
+    {0x0051B09Cu, "KERNEL32.dll!GetOverlappedResult", &k32_get_overlapped_result},
     {0x0051B0A0u, "KERNEL32.dll!GetDiskFreeSpaceA", &k32_get_disk_free_space_a},
     {0x0051B0A4u, "KERNEL32.dll!DeleteFileA", &k32_delete_file_a},
     {0x0051B0A8u, "KERNEL32.dll!GetFileAttributesA", &k32_get_file_attributes_a},
@@ -2465,7 +2607,7 @@ constexpr IatDescriptor kIatTable[] = {
     {0x0051B194u, "KERNEL32.dll!GetCurrentThreadId", [](CpuContext& c, GuestMemory& m){ c.eax = current_tid(); c.ret_stdcall(m, 0u); }},
     {0x0051B198u, "KERNEL32.dll!GetSystemTimeAsFileTime", &k32_get_system_time_as_file_time},
     {0x0051B19Cu, "KERNEL32.dll!HeapReAlloc", &k32_heap_realloc},
-    {0x0051B1A0u, "KERNEL32.dll!ExitProcess", [](CpuContext& c, GuestMemory& m){ hle_win32_post_quit(static_cast<int>(c.arg32(m, 0))); c.ret_stdcall(m, 4u); }},
+    {0x0051B1A0u, "KERNEL32.dll!ExitProcess", [](CpuContext& c, GuestMemory& m){ const int ec = static_cast<int>(c.arg32(m, 0)); hle_win32_log("ExitProcess(%d)", ec); hle_win32_post_quit(ec); c.ret_stdcall(m, 4u); }},
     {0x0051B1A4u, "KERNEL32.dll!VirtualFree", &k32_virtual_free},
     {0x0051B1A8u, "KERNEL32.dll!HeapCreate", &win32_ret_val<12u, 0x10000009u>},
     {0x0051B1ACu, "KERNEL32.dll!HeapDestroy", &win32_ret_val<4u, 1u>},
@@ -2496,7 +2638,7 @@ constexpr IatDescriptor kIatTable[] = {
     {0x0051B220u, "USER32.dll!GetMenuState", &win32_ret_val<12u, 0u>},
     {0x0051B224u, "USER32.dll!GetSubMenu", &win32_ret_val<8u, kHMENU_MAIN>},
     {0x0051B228u, "USER32.dll!GetKeyState", &u32_get_key_state},
-    {0x0051B22Cu, "USER32.dll!DestroyWindow", &win32_ret_val<4u, 1u>},
+    {0x0051B22Cu, "USER32.dll!DestroyWindow", &u32_destroy_window},
     {0x0051B230u, "USER32.dll!GetLastActivePopup", &win32_ret_val<4u, kHWND_MAIN>},
     {0x0051B234u, "USER32.dll!GetSystemMetrics", &u32_get_system_metrics},
     {0x0051B238u, "USER32.dll!PeekMessageA", &u32_peek_message_a},
@@ -2514,7 +2656,7 @@ constexpr IatDescriptor kIatTable[] = {
     {0x0051B268u, "USER32.dll!SetWindowLongA", [](CpuContext& c, GuestMemory& m){ uint32_t idx=c.arg32(m,1), v=c.arg32(m,2); std::lock_guard<std::mutex> lk(g_w32.state_mtx); uint32_t prev=g_w32.window_longs[idx]; g_w32.window_longs[idx]=v; c.eax=prev; c.ret_stdcall(m,12); }},
     {0x0051B26Cu, "USER32.dll!GetParent", &win32_ret_val<4u, 0u>},
     {0x0051B270u, "USER32.dll!MoveWindow", &win32_ret_val<24u, 1u>},
-    {0x0051B274u, "USER32.dll!DialogBoxParamA", &win32_ret_val<20u, kIDOK>},
+    {0x0051B274u, "USER32.dll!DialogBoxParamA", &u32_dialog_box_param_a},
     {0x0051B278u, "USER32.dll!MessageBoxA", &u32_message_box_a},
     {0x0051B27Cu, "USER32.dll!EmptyClipboard", &win32_ret_val<0u, 1u>},
     {0x0051B280u, "USER32.dll!SetClipboardData", &win32_ret_val<8u, 0u>},
@@ -2527,7 +2669,7 @@ constexpr IatDescriptor kIatTable[] = {
     {0x0051B29Cu, "USER32.dll!TranslateMessage", &win32_ret_val<4u, 1u>},
     {0x0051B2A0u, "USER32.dll!PostQuitMessage", &u32_post_quit_message},
     {0x0051B2A4u, "USER32.dll!DefWindowProcA", &win32_ret_val<16u, 0u>},
-    {0x0051B2A8u, "USER32.dll!ShowCursor", &win32_ret_val<4u, 1u>},
+    {0x0051B2A8u, "USER32.dll!ShowCursor", &u32_show_cursor},
     {0x0051B2ACu, "USER32.dll!UpdateWindow", &win32_ret_val<4u, 1u>},
     {0x0051B2B0u, "USER32.dll!IsWindowVisible", &win32_ret_val<4u, 1u>},
     {0x0051B2B4u, "USER32.dll!IsWindowEnabled", &win32_ret_val<4u, 1u>},
@@ -2629,20 +2771,45 @@ const IatDescriptor* lookup_iat_desc(uint32_t iat_va) noexcept {
 
 void hle_win32_init(const std::string& assets_dir, uint32_t screen_width, uint32_t screen_height) {
     hle_win32_shutdown();
-    std::lock_guard<std::mutex> lock(g_w32.state_mtx);
-    g_w32.assets_dir     = assets_dir;
-    g_w32.screen_w       = (screen_width > 0u) ? screen_width : 640u;
-    g_w32.screen_h       = (screen_height > 0u) ? screen_height : 480u;
-    g_w32.boot_time      = std::chrono::steady_clock::now();
-    g_w32.main_thread_id = std::this_thread::get_id();
-    g_w32.quit_requested.store(false, std::memory_order_release);
-    g_w32.quit_code.store(0, std::memory_order_relaxed);
-    g_w32.hostent_va     = 0u;
-    g_w32.env_ansi_va    = 0u;
-    g_w32.env_wide_va    = 0u;
-    g_w32.cmdline_va     = 0u;
-    g_w32.temp_str_va    = 0u;
-    tls_tid              = 1u;
+    {
+        std::lock_guard<std::mutex> lock(g_w32.state_mtx);
+        g_w32.assets_dir     = assets_dir;
+        g_w32.screen_w       = (screen_width > 0u) ? screen_width : 640u;
+        g_w32.screen_h       = (screen_height > 0u) ? screen_height : 480u;
+        g_w32.boot_time      = std::chrono::steady_clock::now();
+        g_w32.main_thread_id = std::this_thread::get_id();
+        g_w32.quit_requested.store(false, std::memory_order_release);
+        g_w32.quit_code.store(0, std::memory_order_relaxed);
+        g_w32.hostent_va     = 0u;
+        g_w32.env_ansi_va    = 0u;
+        g_w32.env_wide_va    = 0u;
+        g_w32.cmdline_va     = 0u;
+        g_w32.temp_str_va    = 0u;
+        g_w32.window_longs[static_cast<uint32_t>(-6)] = kHINST_MAIN; // GWL_HINSTANCE
+        tls_tid              = 1u;
+    }
+    {
+        std::lock_guard<std::mutex> llock(g_log.mtx);
+        if (g_log.fp != nullptr) {
+            std::fclose(g_log.fp);
+            g_log.fp = nullptr;
+        }
+        g_log.ring.clear();
+        g_log.lines_written = 0u;
+        g_log.missing_file_logs.store(0u, std::memory_order_relaxed);
+        g_log.found_file_logs.store(0u, std::memory_order_relaxed);
+        g_log.thread_spawn_count.store(0u, std::memory_order_relaxed);
+        g_log.thread_fail_count.store(0u, std::memory_order_relaxed);
+        g_log.destroy_window_calls.store(0u, std::memory_order_relaxed);
+        g_log.dialog_box_calls.store(0u, std::memory_order_relaxed);
+        g_log.cursor_display_count.store(0, std::memory_order_relaxed);
+        if (!assets_dir.empty()) {
+            const fs::path log_path = fs::path(assets_dir) / "mbaa_debug.log";
+            g_log.fp = std::fopen(log_path.string().c_str(), "wb");
+        }
+    }
+    hle_win32_log("Win32 HLE init assets_dir=%s (%ux%u)",
+                  assets_dir.c_str(), g_w32.screen_w, g_w32.screen_h);
 }
 
 void hle_win32_shutdown() {
@@ -2663,6 +2830,13 @@ void hle_win32_shutdown() {
             kv.second.file->fp = nullptr;
         } else if (kv.second.kind == HandleKind::Thread && kv.second.thread && kv.second.thread->worker.joinable()) {
             kv.second.thread->worker.detach();
+        }
+    }
+    {
+        std::lock_guard<std::mutex> llock(g_log.mtx);
+        if (g_log.fp != nullptr) {
+            std::fclose(g_log.fp);
+            g_log.fp = nullptr;
         }
     }
 }
@@ -2725,6 +2899,32 @@ void hle_win32_signal_event(uint32_t handle_val) {
         rec.event->signaled = true;
         rec.event->cv.notify_all();
     }
+}
+
+void hle_win32_log(const char* fmt, ...) {
+    if (!fmt) return;
+    char buf[1024] = {};
+    va_list ap;
+    va_start(ap, fmt);
+    std::vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    append_debug_log_line(buf);
+}
+
+std::string hle_win32_recent_logs(size_t max_lines) {
+    std::lock_guard<std::mutex> llock(g_log.mtx);
+    std::string out;
+    const size_t total = g_log.ring.size();
+    const size_t start = (max_lines < total) ? (total - max_lines) : 0u;
+    for (size_t i = start; i < total; ++i) {
+        if (!out.empty()) out.push_back('\n');
+        out += g_log.ring[i];
+    }
+    out += "\nthrSpawn=" + std::to_string(g_log.thread_spawn_count.load(std::memory_order_relaxed)) +
+           " thrFail=" + std::to_string(g_log.thread_fail_count.load(std::memory_order_relaxed)) +
+           " missFiles=" + std::to_string(g_log.missing_file_logs.load(std::memory_order_relaxed)) +
+           " destroyWin=" + std::to_string(g_log.destroy_window_calls.load(std::memory_order_relaxed));
+    return out;
 }
 
 } // namespace mbaa_recomp

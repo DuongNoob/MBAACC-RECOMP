@@ -55,7 +55,8 @@ std::string find_exe_case_insensitive(const std::string& assets_dir, const char*
     return {};
 }
 
-void run_static_crt_initializers(CpuContext& ctx, GuestMemory& mem) {
+uint32_t run_static_crt_initializers(CpuContext& ctx, GuestMemory& mem) {
+    uint32_t count = 0u;
     for (uint32_t ptr_va = kCrtXcaStartVa; ptr_va < kCrtXczEndVa; ptr_va += 4u) {
         const uint32_t fn_va = mem.r32(ptr_va);
         if (fn_va == 0u) continue;
@@ -67,7 +68,9 @@ void run_static_crt_initializers(CpuContext& ctx, GuestMemory& mem) {
         fn(ctx, mem);
         // Defensively restore stack pointer if a compiler stub leaves alignment delta.
         ctx.esp = saved_esp;
+        ++count;
     }
+    return count;
 }
 
 } // namespace
@@ -178,6 +181,7 @@ bool RuntimeEngine::init(const std::string& assets_dir, void* metal_layer, int w
 
     // MBAACC native client coordinate space is 640x480 unless configured otherwise.
     hle_win32_init(assets_dir, 640u, 480u);
+    hle_win32_log("RuntimeEngine::init PE loaded (%s), starting guest thread", exe_path.c_str());
     input_init();
     audio_init();
 
@@ -185,6 +189,19 @@ bool RuntimeEngine::init(const std::string& assets_dir, void* metal_layer, int w
 
     Impl* impl_ptr = impl_.get();
     hle_win32_set_frame_yield_callback([impl_ptr]() -> bool {
+        if (!impl_ptr->guest_boot_ok) {
+            hle_win32_log(
+                "First PeekMessageA yield: active=%u d3d_ctx=0x%08x d3d_dev=0x%08x "
+                "dinput8=0x%08x hwnd=0x%08x in_mgr=0x%08x rt0=0x%08x",
+                static_cast<unsigned>(impl_ptr->mem.r8(0x0076e650u)),
+                impl_ptr->mem.r32(0x00767448u),
+                impl_ptr->mem.r32(0x0076e7d4u),
+                impl_ptr->mem.r32(0x005544e8u),
+                impl_ptr->mem.r32(0x005541c4u),
+                impl_ptr->mem.r32(0x0076e6b0u),
+                impl_ptr->mem.r32(0x005542d0u));
+        }
+
         std::unique_lock<std::mutex> lock(impl_ptr->sync_mtx);
         impl_ptr->guest_boot_ok = true;
         impl_ptr->phase = Impl::StepPhase::GuestYielded;
@@ -216,7 +233,8 @@ bool RuntimeEngine::init(const std::string& assets_dir, void* metal_layer, int w
         @autoreleasepool {
             hle_win32_set_guest_main_thread();
 
-            run_static_crt_initializers(impl_ptr->ctx, impl_ptr->mem);
+            const uint32_t crt_cnt = run_static_crt_initializers(impl_ptr->ctx, impl_ptr->mem);
+            hle_win32_log("CRT initializers completed: %u", crt_cnt);
 
             const uint32_t cmdline_va = impl_ptr->mem.alloc_thunk_block(16u, 4u);
             impl_ptr->mem.write_cstring(cmdline_va, "", 16u);
@@ -228,7 +246,9 @@ bool RuntimeEngine::init(const std::string& assets_dir, void* metal_layer, int w
             impl_ptr->ctx.push32(impl_ptr->mem, GuestMemory::kImageBase);// hInstance
             impl_ptr->ctx.push32(impl_ptr->mem, kSentinelReturnVa);      // return address
 
+            hle_win32_log("Entering WinMain (0x0040d240)");
             win_main_fn(impl_ptr->ctx, impl_ptr->mem);
+            hle_win32_log("WinMain exited eax=0x%08x", impl_ptr->ctx.eax);
 
             std::lock_guard<std::mutex> lock(impl_ptr->sync_mtx);
             impl_ptr->phase = Impl::StepPhase::GuestExited;
@@ -303,7 +323,13 @@ void RuntimeEngine::step_frame() {
         impl_->d3d_bridge.end_frame_and_present();
     }
 
-    impl_->frame_count.fetch_add(1u, std::memory_order_relaxed);
+    const uint64_t fno = impl_->frame_count.fetch_add(1u, std::memory_order_relaxed) + 1u;
+    if (fno == 1u || fno == 60u || fno == 300u) {
+        hle_win32_log("Frame %llu | active=%u | %s",
+                      static_cast<unsigned long long>(fno),
+                      static_cast<unsigned>(impl_->mem.r8(0x0076e650u)),
+                      impl_->d3d_bridge.debug_stats().c_str());
+    }
 }
 
 void RuntimeEngine::set_touch_state(const TouchInputState& state) {
@@ -370,6 +396,29 @@ uint64_t RuntimeEngine::frame_count() const noexcept {
 
 const std::string& RuntimeEngine::last_error() const noexcept {
     return impl_->last_error;
+}
+
+std::string RuntimeEngine::debug_summary() const {
+    if (!impl_) return "RuntimeEngine uninitialized";
+    char hdr[384] = {};
+    std::snprintf(
+        hdr, sizeof(hdr),
+        "frames=%llu running=%d active[0x76e650]=%u\n"
+        "d3d_ctx=0x%08x d3d_dev=0x%08x dinput8=0x%08x rt0=0x%08x heap=%.1fMB\n",
+        static_cast<unsigned long long>(impl_->frame_count.load(std::memory_order_relaxed)),
+        impl_->running.load(std::memory_order_relaxed) ? 1 : 0,
+        static_cast<unsigned>(impl_->mem.r8(0x0076e650u)),
+        impl_->mem.r32(0x00767448u),
+        impl_->mem.r32(0x0076e7d4u),
+        impl_->mem.r32(0x005544e8u),
+        impl_->mem.r32(0x005542d0u),
+        static_cast<double>(impl_->mem.heap_used_bytes()) / (1024.0 * 1024.0));
+
+    std::string out(hdr);
+    out += impl_->d3d_bridge.debug_stats();
+    out += "\n--- Logs ---\n";
+    out += hle_win32_recent_logs(10u);
+    return out;
 }
 
 CpuContext& RuntimeEngine::cpu_context() noexcept {

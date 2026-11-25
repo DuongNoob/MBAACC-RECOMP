@@ -17,6 +17,7 @@
 
 #include "mbaa_recomp/d3d9_shim.h"
 #include "mbaa_recomp/dispatch.h"
+#include "mbaa_recomp/hle_win32.h"
 #include "shader_manifest.h"
 
 #import <TargetConditionals.h>
@@ -720,6 +721,16 @@ struct D3D9MetalBridge::Impl {
     bool encoder_rt_dirty = true;
     uint64_t lru_clock = 1;
     uint64_t draw_calls = 0;
+    uint64_t clear_calls = 0;
+    uint64_t present_calls = 0;
+    uint64_t create_device_calls = 0;
+    uint64_t create_tex_calls = 0;
+    uint64_t create_fx_calls = 0;
+    uint64_t create_vb_calls = 0;
+    uint64_t create_ib_calls = 0;
+    uint64_t pso_failures = 0;
+    uint64_t draw_dropped_no_enc = 0;
+    uint64_t draw_dropped_no_pso = 0;
 
     // Caches
     std::unordered_map<PipelineCacheKey, id<MTLRenderPipelineState>, PipelineCacheKeyHash> pipeline_cache;
@@ -765,8 +776,11 @@ struct D3D9MetalBridge::Impl {
     std::array<float, 16> mat_proj  = identity_matrix();
 
     uint32_t current_fvf        = 0x000001C4u;
+    uint32_t current_vb_id      = 0;
+    uint32_t current_vb_offset  = 0;
     uint32_t current_vb_va      = 0;
     uint32_t current_vb_stride  = 32;
+    uint32_t current_ib_id      = 0;
     uint32_t current_ib_va      = 0;
     uint32_t vp_x = 0, vp_y = 0, vp_w = 640, vp_h = 480;
     uint32_t active_effect_id   = 0;
@@ -775,13 +789,37 @@ struct D3D9MetalBridge::Impl {
     // -----------------------------------------------------------------------
     // Helpers: Guest COM Object Allocation & Resolution
     // -----------------------------------------------------------------------
-    uint32_t alloc_com_object(GuestMemory& mem, uint32_t vtbl_va, uint32_t handle_id, uint32_t kind_tag) {
-        const uint32_t obj_va = mem.alloc_thunk_block(16u, 16u);
-        mem.w32(obj_va + 0u, vtbl_va);
-        mem.w32(obj_va + 4u, handle_id);
-        mem.w32(obj_va + 8u, 1u);
-        mem.w32(obj_va + 12u, kind_tag);
+    uint32_t alloc_com_object(GuestMemory& mem, uint32_t vtbl_va, uint32_t handle_id, uint32_t kind_tag, bool transient = false) {
+        uint32_t obj_va = transient ? mem.guest_alloc(16u, 16u) : 0u;
+        if (obj_va == 0u) {
+            obj_va = mem.alloc_thunk_block(16u, 16u);
+        }
+        if (obj_va != 0u) {
+            mem.w32(obj_va + 0u, vtbl_va);
+            mem.w32(obj_va + 4u, handle_id);
+            mem.w32(obj_va + 8u, 1u);
+            mem.w32(obj_va + 12u, kind_tag);
+        }
         return obj_va;
+    }
+
+    BufferRecord* find_buffer_by_va(const GuestMemory& mem, uint32_t buf_va) {
+        if (buf_va == 0u || !mem.in_bounds(buf_va, 16u)) return nullptr;
+        const uint32_t kind = mem.r32(buf_va + 12u);
+        if (kind != kKindVBuf && kind != kKindIBuf) return nullptr;
+        auto it = buffers.find(mem.r32(buf_va + 4u));
+        return (it != buffers.end()) ? &it->second : nullptr;
+    }
+
+    id<MTLTexture> resolve_surface_texture(const GuestMemory& mem, uint32_t surf_va) {
+        SurfaceRecord* s = find_surface_by_va(mem, surf_va);
+        if (!s) return nil;
+        if (s->mtl_tex != nil) return s->mtl_tex;
+        if (s->parent_tex_id != 0u) {
+            auto tit = textures.find(s->parent_tex_id);
+            if (tit != textures.end()) return tit->second.mtl_tex;
+        }
+        return nil;
     }
 
     TextureRecord* find_texture_by_va(const GuestMemory& mem, uint32_t tex_va) {
@@ -910,8 +948,9 @@ struct D3D9MetalBridge::Impl {
         id<MTLFunction> vsFn = [shader_lib newFunctionWithName:vsName];
         id<MTLFunction> psFn = [shader_lib newFunctionWithName:psName];
         if (!vsFn || !psFn) {
-            std::fprintf(stderr, "[D3D9MetalBridge] Missing Metal shader function %s / %s\n",
-                         entry.vertex_fn, entry.fragment_fn);
+            ++pso_failures;
+            hle_win32_log("[D3D9MetalBridge] Missing Metal shader function %s / %s",
+                          entry.vertex_fn, entry.fragment_fn);
             return nil;
         }
 
@@ -956,8 +995,9 @@ struct D3D9MetalBridge::Impl {
         NSError* err = nil;
         id<MTLRenderPipelineState> pso = [device newRenderPipelineStateWithDescriptor:desc error:&err];
         if (!pso || err) {
-            std::fprintf(stderr, "[D3D9MetalBridge] PSO build failed for %s: %s\n",
-                         entry.fragment_fn, err ? err.localizedDescription.UTF8String : "unknown");
+            ++pso_failures;
+            hle_win32_log("[D3D9MetalBridge] PSO build failed for %s: %s",
+                          entry.fragment_fn, err ? err.localizedDescription.UTF8String : "unknown");
             return nil;
         }
         pipeline_cache[key] = pso;
@@ -1104,7 +1144,10 @@ struct D3D9MetalBridge::Impl {
 
         const auto& pass_entry = shader_manifest::entry_for_pass_id(pass_id);
         id<MTLRenderCommandEncoder> enc = ensure_render_encoder(mem, pass_entry.mrt_count);
-        if (!enc) return;
+        if (!enc) {
+            ++draw_dropped_no_enc;
+            return;
+        }
 
         // Decode FVF vertices into unified MbaaMetalVertex buffer
         const bool has_rhw      = (current_fvf & kFvfXyzRhw) != 0u;
@@ -1180,11 +1223,11 @@ struct D3D9MetalBridge::Impl {
         uint32_t draw_index_count = 0u;
 
         auto read_idx = [&](uint32_t k) -> uint32_t {
-            if (!idata) return k;
-            if (index_fmt == 101u) { // D3DFMT_INDEX16
-                return read_u16_le_buf(idata + k * 2u);
-            }
-            return read_u32_le_buf(idata + k * 4u);
+            if (!idata) return std::min<uint32_t>(k, vcount - 1u);
+            const uint32_t raw_idx = (index_fmt == 101u)
+                ? read_u16_le_buf(idata + k * 2u)
+                : read_u32_le_buf(idata + k * 4u);
+            return std::min<uint32_t>(raw_idx, vcount - 1u);
         };
 
         switch (prim_type) {
@@ -1235,6 +1278,16 @@ struct D3D9MetalBridge::Impl {
         id<MTLTexture> rt1 = (pass_entry.mrt_count >= 2u) ? resolve_rt_texture(mem, 1u) : nil;
         id<MTLTexture> rt2 = (pass_entry.mrt_count >= 3u) ? resolve_rt_texture(mem, 2u) : nil;
 
+        uint32_t src_b = render_states[kRsSrcBlend] ? render_states[kRsSrcBlend] : 5u;
+        uint32_t dst_b = render_states[kRsDestBlend] ? render_states[kRsDestBlend] : 6u;
+        if (src_b == 12u) { // D3DBLEND_BOTHSRCALPHA
+            src_b = 5u;
+            dst_b = 6u;
+        } else if (src_b == 13u) { // D3DBLEND_BOTHINVSRCALPHA
+            src_b = 6u;
+            dst_b = 5u;
+        }
+
         PipelineCacheKey pkey{};
         pkey.pass_id      = static_cast<uint32_t>(pass_id);
         pkey.rt_fmt0      = rt0 ? static_cast<uint32_t>(rt0.pixelFormat) : static_cast<uint32_t>(MTLPixelFormatBGRA8Unorm);
@@ -1243,8 +1296,8 @@ struct D3D9MetalBridge::Impl {
         pkey.has_depth    = (bound_ds_surface != 0u && depth_tex != nil &&
                              rt0 != nil && depth_tex.width == rt0.width && depth_tex.height == rt0.height) ? 1u : 0u;
         pkey.blend_enable = render_states[kRsAlphaBlendEnable] ? 1u : 0u;
-        pkey.src_blend    = static_cast<uint8_t>(render_states[kRsSrcBlend] ? render_states[kRsSrcBlend] : 5u);
-        pkey.dst_blend    = static_cast<uint8_t>(render_states[kRsDestBlend] ? render_states[kRsDestBlend] : 6u);
+        pkey.src_blend    = static_cast<uint8_t>(src_b);
+        pkey.dst_blend    = static_cast<uint8_t>(dst_b);
         pkey.blend_op     = static_cast<uint8_t>(render_states[kRsBlendOp] ? render_states[kRsBlendOp] : 1u);
         pkey.sep_alpha    = render_states[kRsSeparateAlphaBlendEnable] ? 1u : 0u;
         pkey.src_alpha    = static_cast<uint8_t>(render_states[kRsSrcBlendAlpha] ? render_states[kRsSrcBlendAlpha] : 2u);
@@ -1252,7 +1305,10 @@ struct D3D9MetalBridge::Impl {
         pkey.alpha_op     = static_cast<uint8_t>(render_states[kRsBlendOpAlpha] ? render_states[kRsBlendOpAlpha] : 1u);
 
         id<MTLRenderPipelineState> pso = get_pipeline(pkey);
-        if (!pso) return;
+        if (!pso) {
+            ++draw_dropped_no_pso;
+            return;
+        }
 
         [enc setRenderPipelineState:pso];
         if (pkey.has_depth) {
@@ -1286,7 +1342,15 @@ struct D3D9MetalBridge::Impl {
         du.alpha_op0         = tss_stage0_alphaop[0] ? tss_stage0_alphaop[0] : 4u;
         argb_u32_to_float4(render_states[kRsTextureFactor], du.texture_factor);
 
-        [enc setVertexBytes:verts.data() length:verts.size() * sizeof(MbaaMetalVertex) atIndex:MBAA_BUF_VERTICES];
+        const size_t vbytes = verts.size() * sizeof(MbaaMetalVertex);
+        if (vbytes <= 4096u) {
+            [enc setVertexBytes:verts.data() length:vbytes atIndex:MBAA_BUF_VERTICES];
+        } else {
+            id<MTLBuffer> vbuf = [device newBufferWithBytes:verts.data()
+                                                     length:vbytes
+                                                    options:MTLResourceStorageModeShared];
+            [enc setVertexBuffer:vbuf offset:0 atIndex:MBAA_BUF_VERTICES];
+        }
         [enc setVertexBytes:&du length:sizeof(du) atIndex:MBAA_BUF_DRAW_UNIFORMS];
         [enc setFragmentBytes:&du length:sizeof(du) atIndex:MBAA_BUF_DRAW_UNIFORMS];
 
@@ -1311,6 +1375,11 @@ struct D3D9MetalBridge::Impl {
             [enc drawPrimitives:mtl_prim vertexStart:0 vertexCount:draw_index_count];
         }
         ++draw_calls;
+        if (draw_calls == 1u) {
+            hle_win32_log("First D3D9 draw: pass=%d fvf=0x%x vcnt=%u pcnt=%u rt=%ux%u tex0=0x%08x",
+                          static_cast<int>(pass_id), current_fvf, vcount, prim_count,
+                          static_cast<uint32_t>(rtw), static_cast<uint32_t>(rth), bound_textures[0]);
+        }
     }
 
     void bind_effect_textures(
@@ -1529,6 +1598,7 @@ void com_unknown_release(CpuContext& ctx, GuestMemory& mem) {
                 std::lock_guard<std::recursive_mutex> lk(im->mtx);
                 const uint32_t hid  = mem.r32(self_va + 4u);
                 const uint32_t kind = mem.r32(self_va + 12u);
+                bool can_free_self = false;
                 if (kind == kKindTexture) {
                     if (auto it = im->textures.find(hid); it != im->textures.end()) {
                         if (im->cached_texture_bytes >= it->second.gpu_bytes) {
@@ -1539,23 +1609,31 @@ void com_unknown_release(CpuContext& ctx, GuestMemory& mem) {
                         if (it->second.staging_va) mem.guest_free(it->second.staging_va);
                         im->textures.erase(it);
                     }
+                    can_free_self = true;
                 } else if (kind == kKindSurface && hid > 2u) {
                     if (auto it = im->surfaces.find(hid); it != im->surfaces.end()) {
                         if (it->second.staging_va) mem.guest_free(it->second.staging_va);
                         im->surfaces.erase(it);
                     }
+                    can_free_self = true;
                 } else if (kind == kKindEffect) {
                     im->effects.erase(hid);
+                    can_free_self = true;
                 } else if (kind == kKindFont) {
                     if (auto it = im->fonts.find(hid); it != im->fonts.end()) {
                         if (it->second.ct_font) CFRelease(it->second.ct_font);
                         im->fonts.erase(it);
                     }
+                    can_free_self = true;
                 } else if (kind == kKindVBuf || kind == kKindIBuf) {
                     if (auto it = im->buffers.find(hid); it != im->buffers.end()) {
                         if (it->second.data_va) mem.guest_free(it->second.data_va);
                         im->buffers.erase(it);
                     }
+                    can_free_self = true;
+                }
+                if (can_free_self && self_va >= GuestMemory::kHeapBase) {
+                    mem.guest_free(self_va);
                 }
             }
         }
@@ -1710,6 +1788,9 @@ void com_d3d9_create_device(CpuContext& ctx, GuestMemory& mem) {
     im->bound_rt_surfaces[0] = im->backbuffer_surf_va;
     im->bound_ds_surface     = im->depth_surf_va;
     im->encoder_rt_dirty     = true;
+    ++im->create_device_calls;
+    hle_win32_log("D3D9 CreateDevice %ux%u -> dev=0x%08x bb=0x%08x",
+                  bb_w, bb_h, im->device_guest_va, im->backbuffer_surf_va);
 
     mem.w32(pp_dev_va, im->device_guest_va);
     ctx.eax = kS_OK;
@@ -1737,6 +1818,22 @@ void com_dev_get_direct3d(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t pp_d3d_va = ctx.arg32(mem, 1);
     if (auto* im = active_impl(); im && pp_d3d_va && mem.in_bounds(pp_d3d_va, 4u)) {
         mem.w32(pp_d3d_va, im->d3d9_guest_va);
+        if (im->d3d9_guest_va != 0u) {
+            mem.w32(im->d3d9_guest_va + 8u, mem.r32(im->d3d9_guest_va + 8u) + 1u);
+        }
+    }
+    ctx.eax = kS_OK;
+    ctx.ret_stdcall(mem, 8u);
+}
+
+void com_resource_get_device(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t pp_dev_va = ctx.arg32(mem, 1);
+    if (auto* im = active_impl(); im && pp_dev_va && mem.in_bounds(pp_dev_va, 4u)) {
+        std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        mem.w32(pp_dev_va, im->device_guest_va);
+        if (im->device_guest_va != 0u) {
+            mem.w32(im->device_guest_va + 8u, mem.r32(im->device_guest_va + 8u) + 1u);
+        }
     }
     ctx.eax = kS_OK;
     ctx.ret_stdcall(mem, 8u);
@@ -1791,6 +1888,11 @@ void com_dev_reset(CpuContext& ctx, GuestMemory& mem) {
 void com_dev_present(CpuContext& ctx, GuestMemory& mem) {
     if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        ++im->present_calls;
+        if (im->present_calls == 1u) {
+            hle_win32_log("First D3D9 Present call (in_frame=%d draws=%llu)",
+                          im->in_frame ? 1 : 0, static_cast<unsigned long long>(im->draw_calls));
+        }
         im->end_active_encoder();
         im->guest_presented_this_frame = true;
         if (!im->in_frame) {
@@ -1849,7 +1951,8 @@ uint32_t create_texture_internal(
         im.evict_lru_to_budget(D3D9MetalBridge::kTextureCacheLimitBytes);
     }
 
-    rec.guest_va = im.alloc_com_object(mem, im.vtbl_texture, rec.id, kKindTexture);
+    rec.guest_va = im.alloc_com_object(mem, im.vtbl_texture, rec.id, kKindTexture, true);
+    ++im.create_tex_calls;
     im.textures[rec.id] = std::move(rec);
     return im.textures[rec.id].guest_va;
 }
@@ -1875,6 +1978,72 @@ void com_dev_create_texture(CpuContext& ctx, GuestMemory& mem) {
     ctx.ret_stdcall(mem, 36u);
 }
 
+void com_dev_create_vertex_buffer(CpuContext& ctx, GuestMemory& mem) {
+    // (this, Length, Usage, FVF, Pool, ppVertexBuffer, pSharedHandle) -> 28 bytes
+    const uint32_t len   = ctx.arg32(mem, 1);
+    const uint32_t fvf   = ctx.arg32(mem, 3);
+    const uint32_t pp_vb = ctx.arg32(mem, 5);
+    if (auto* im = active_impl(); im && pp_vb && mem.in_bounds(pp_vb, 4u)) {
+        std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        BufferRecord br{};
+        br.id       = ++im->next_handle_id;
+        br.size     = std::max<uint32_t>(len, 16u);
+        br.fvf      = fvf;
+        br.is_index = false;
+        br.data_va  = mem.guest_calloc(1u, br.size);
+        if (br.data_va != 0u) {
+            br.guest_va = im->alloc_com_object(mem, im->vtbl_vbuf, br.id, kKindVBuf, true);
+            im->buffers[br.id] = br;
+            ++im->create_vb_calls;
+            if (im->create_vb_calls <= 3u) {
+                hle_win32_log("CreateVertexBuffer #%llu size=%u fvf=0x%x -> 0x%08x",
+                              static_cast<unsigned long long>(im->create_vb_calls),
+                              br.size, fvf, br.guest_va);
+            }
+            mem.w32(pp_vb, br.guest_va);
+            ctx.eax = kS_OK;
+        } else {
+            ctx.eax = kE_FAIL;
+        }
+    } else {
+        ctx.eax = kD3DERR_INVALIDCALL;
+    }
+    ctx.ret_stdcall(mem, 28u);
+}
+
+void com_dev_create_index_buffer(CpuContext& ctx, GuestMemory& mem) {
+    // (this, Length, Usage, Format, Pool, ppIndexBuffer, pSharedHandle) -> 28 bytes
+    const uint32_t len   = ctx.arg32(mem, 1);
+    const uint32_t fmt   = ctx.arg32(mem, 3);
+    const uint32_t pp_ib = ctx.arg32(mem, 5);
+    if (auto* im = active_impl(); im && pp_ib && mem.in_bounds(pp_ib, 4u)) {
+        std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        BufferRecord br{};
+        br.id       = ++im->next_handle_id;
+        br.size     = std::max<uint32_t>(len, 16u);
+        br.format   = fmt ? fmt : 101u; // D3DFMT_INDEX16
+        br.is_index = true;
+        br.data_va  = mem.guest_calloc(1u, br.size);
+        if (br.data_va != 0u) {
+            br.guest_va = im->alloc_com_object(mem, im->vtbl_ibuf, br.id, kKindIBuf, true);
+            im->buffers[br.id] = br;
+            ++im->create_ib_calls;
+            if (im->create_ib_calls <= 3u) {
+                hle_win32_log("CreateIndexBuffer #%llu size=%u fmt=%u -> 0x%08x",
+                              static_cast<unsigned long long>(im->create_ib_calls),
+                              br.size, br.format, br.guest_va);
+            }
+            mem.w32(pp_ib, br.guest_va);
+            ctx.eax = kS_OK;
+        } else {
+            ctx.eax = kE_FAIL;
+        }
+    } else {
+        ctx.eax = kD3DERR_INVALIDCALL;
+    }
+    ctx.ret_stdcall(mem, 28u);
+}
+
 void com_dev_create_render_target(CpuContext& ctx, GuestMemory& mem) {
     // (this, Width, Height, Format, MultiSample, MultisampleQuality, Lockable, ppSurface, pSharedHandle) -> 36 bytes
     const uint32_t w       = ctx.arg32(mem, 1);
@@ -1890,7 +2059,7 @@ void com_dev_create_render_target(CpuContext& ctx, GuestMemory& mem) {
         sr.format   = fmt ? fmt : kFmtA8R8G8B8;
         sr.usage    = kUsageRenderTarget;
         sr.mtl_tex  = im->make_mtl_texture(sr.width, sr.height, d3d_fmt_to_mtl(sr.format), true, false);
-        sr.guest_va = im->alloc_com_object(mem, im->vtbl_surface, sr.id, kKindSurface);
+        sr.guest_va = im->alloc_com_object(mem, im->vtbl_surface, sr.id, kKindSurface, true);
         im->surfaces[sr.id] = sr;
         mem.w32(pp_surf, sr.guest_va);
         ctx.eax = kS_OK;
@@ -1915,7 +2084,7 @@ void com_dev_create_depth_stencil_surface(CpuContext& ctx, GuestMemory& mem) {
         sr.format   = fmt ? fmt : kFmtD24S8;
         sr.usage    = kUsageDepthStencil;
         sr.mtl_tex  = im->make_mtl_texture(sr.width, sr.height, MTLPixelFormatDepth32Float_Stencil8, false, true);
-        sr.guest_va = im->alloc_com_object(mem, im->vtbl_surface, sr.id, kKindSurface);
+        sr.guest_va = im->alloc_com_object(mem, im->vtbl_surface, sr.id, kKindSurface, true);
         im->surfaces[sr.id] = sr;
         mem.w32(pp_surf, sr.guest_va);
         ctx.eax = kS_OK;
@@ -1923,6 +2092,114 @@ void com_dev_create_depth_stencil_surface(CpuContext& ctx, GuestMemory& mem) {
         ctx.eax = kD3DERR_INVALIDCALL;
     }
     ctx.ret_stdcall(mem, 36u);
+}
+
+void com_dev_stretch_rect(CpuContext& ctx, GuestMemory& mem) {
+    // (this, pSourceSurface, pSourceRect, pDestSurface, pDestRect, Filter) -> 24 bytes
+    const uint32_t src_va      = ctx.arg32(mem, 1);
+    const uint32_t src_rect_va = ctx.arg32(mem, 2);
+    const uint32_t dst_va      = ctx.arg32(mem, 3);
+    const uint32_t dst_rect_va = ctx.arg32(mem, 4);
+    const uint32_t filter      = ctx.arg32(mem, 5);
+    if (auto* im = active_impl()) {
+        std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        id<MTLTexture> src_tex = im->resolve_surface_texture(mem, src_va);
+        id<MTLTexture> dst_tex = im->resolve_surface_texture(mem, dst_va);
+        if (src_tex != nil && dst_tex != nil && src_tex != dst_tex) {
+            im->end_active_encoder();
+            if (id<MTLCommandBuffer> cb = im->ensure_cmd_buffer()) {
+                if (src_rect_va == 0u && dst_rect_va == 0u &&
+                    src_tex.width == dst_tex.width && src_tex.height == dst_tex.height &&
+                    src_tex.pixelFormat == dst_tex.pixelFormat) {
+                    id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+                    if (blit != nil) {
+                        [blit copyFromTexture:src_tex
+                                  sourceSlice:0
+                                  sourceLevel:0
+                                 sourceOrigin:MTLOriginMake(0, 0, 0)
+                                   sourceSize:MTLSizeMake(src_tex.width, src_tex.height, 1)
+                                    toTexture:dst_tex
+                             destinationSlice:0
+                             destinationLevel:0
+                            destinationOrigin:MTLOriginMake(0, 0, 0)];
+                        [blit endEncoding];
+                    }
+                } else if ((dst_tex.usage & MTLTextureUsageRenderTarget) != 0u) {
+                    const uint32_t dw = static_cast<uint32_t>(dst_tex.width);
+                    const uint32_t dh = static_cast<uint32_t>(dst_tex.height);
+                    double vx = 0.0, vy = 0.0, vw = static_cast<double>(dw), vh = static_cast<double>(dh);
+                    bool partial_dst = false;
+                    if (dst_rect_va != 0u && mem.in_bounds(dst_rect_va, 16u)) {
+                        const int32_t dl = static_cast<int32_t>(mem.r32(dst_rect_va + 0u));
+                        const int32_t dt = static_cast<int32_t>(mem.r32(dst_rect_va + 4u));
+                        const int32_t dr = static_cast<int32_t>(mem.r32(dst_rect_va + 8u));
+                        const int32_t db = static_cast<int32_t>(mem.r32(dst_rect_va + 12u));
+                        if (dr > dl && db > dt) {
+                            vx = std::clamp<double>(dl, 0.0, static_cast<double>(dw));
+                            vy = std::clamp<double>(dt, 0.0, static_cast<double>(dh));
+                            vw = std::clamp<double>(dr - dl, 1.0, static_cast<double>(dw) - vx);
+                            vh = std::clamp<double>(db - dt, 1.0, static_cast<double>(dh) - vy);
+                            partial_dst = (dl > 0 || dt > 0 || static_cast<uint32_t>(dr) < dw || static_cast<uint32_t>(db) < dh);
+                        }
+                    }
+                    MTLRenderPassDescriptor* rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+                    rpd.colorAttachments[0].texture     = dst_tex;
+                    rpd.colorAttachments[0].loadAction  = partial_dst ? MTLLoadActionLoad : MTLLoadActionDontCare;
+                    rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+                    id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rpd];
+                    if (enc != nil) {
+                        [enc setViewport:MTLViewport{vx, vy, vw, vh, 0.0, 1.0}];
+                        PipelineCacheKey pkey{};
+                        pkey.pass_id = MBAA_PASS_PRESENT_BLIT;
+                        pkey.rt_fmt0 = static_cast<uint32_t>(dst_tex.pixelFormat);
+                        if (id<MTLRenderPipelineState> pso = im->get_pipeline(pkey)) {
+                            SamplerStateBlock sb{};
+                            sb.address_u = 3; sb.address_v = 3;
+                            sb.mag_filter = (filter >= 2u) ? 2u : 1u;
+                            sb.min_filter = sb.mag_filter;
+                            [enc setRenderPipelineState:pso];
+                            [enc setFragmentTexture:src_tex atIndex:MBAA_TEX_STAGE0];
+                            [enc setFragmentSamplerState:im->get_sampler(sb) atIndex:0];
+                            [enc drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
+                        }
+                        [enc endEncoding];
+                    }
+                }
+            }
+            im->encoder_rt_dirty = true;
+        }
+    }
+    ctx.eax = kS_OK;
+    ctx.ret_stdcall(mem, 24u);
+}
+
+void com_dev_color_fill(CpuContext& ctx, GuestMemory& mem) {
+    // (this, pSurface, pRect, color) -> 16 bytes
+    const uint32_t surf_va = ctx.arg32(mem, 1);
+    const uint32_t color   = ctx.arg32(mem, 3);
+    if (auto* im = active_impl()) {
+        std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        id<MTLTexture> dst_tex = im->resolve_surface_texture(mem, surf_va);
+        if (dst_tex != nil && (dst_tex.usage & MTLTextureUsageRenderTarget) != 0u) {
+            im->end_active_encoder();
+            if (id<MTLCommandBuffer> cb = im->ensure_cmd_buffer()) {
+                mbaa_float4 cf{};
+                argb_u32_to_float4(color, cf);
+                MTLRenderPassDescriptor* rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+                rpd.colorAttachments[0].texture     = dst_tex;
+                rpd.colorAttachments[0].loadAction  = MTLLoadActionClear;
+                rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+                rpd.colorAttachments[0].clearColor  = MTLClearColorMake(cf.x, cf.y, cf.z, cf.w);
+                id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rpd];
+                if (enc != nil) {
+                    [enc endEncoding];
+                }
+            }
+            im->encoder_rt_dirty = true;
+        }
+    }
+    ctx.eax = kS_OK;
+    ctx.ret_stdcall(mem, 16u);
 }
 
 void com_dev_create_offscreen_plain_surface(CpuContext& ctx, GuestMemory& mem) {
@@ -1939,7 +2216,7 @@ void com_dev_create_offscreen_plain_surface(CpuContext& ctx, GuestMemory& mem) {
         sr.height   = h ? h : 480u;
         sr.format   = fmt ? fmt : kFmtA8R8G8B8;
         sr.mtl_tex  = im->make_mtl_texture(sr.width, sr.height, d3d_fmt_to_mtl(sr.format), false, false);
-        sr.guest_va = im->alloc_com_object(mem, im->vtbl_surface, sr.id, kKindSurface);
+        sr.guest_va = im->alloc_com_object(mem, im->vtbl_surface, sr.id, kKindSurface, true);
         im->surfaces[sr.id] = sr;
         mem.w32(pp_surf, sr.guest_va);
         ctx.eax = kS_OK;
@@ -2034,6 +2311,7 @@ void com_dev_clear(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t color = ctx.arg32(mem, 4);
     if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        ++im->clear_calls;
         im->end_active_encoder();
         im->encoder_rt_dirty = true;
         im->ensure_render_encoder(mem, 1u, (flags & 1u) != 0u, color, (flags & 2u) != 0u);
@@ -2050,7 +2328,7 @@ void com_dev_set_transform(CpuContext& ctx, GuestMemory& mem) {
         const auto m = read_matrix(mem, mat_va);
         if (state == 2u)      im->mat_view  = m;
         else if (state == 3u) im->mat_proj  = m;
-        else                  im->mat_world = m;
+        else if (state == 256u || state == 0u) im->mat_world = m;
     }
     ctx.eax = kS_OK;
     ctx.ret_stdcall(mem, 12u);
@@ -2251,12 +2529,63 @@ void com_dev_draw_primitive(CpuContext& ctx, GuestMemory& mem) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
         const uint32_t vcount = vertex_count_for_prim(prim_type, prim_count);
         const uint32_t base_va = im->current_vb_va + start_v * im->current_vb_stride;
-        if (mem.in_bounds(base_va, static_cast<size_t>(vcount) * im->current_vb_stride)) {
+        if (vcount > 0u && mem.in_bounds(base_va, static_cast<size_t>(vcount) * im->current_vb_stride)) {
             im->execute_draw(mem, prim_type, prim_count, mem.cptr(base_va), vcount, im->current_vb_stride, nullptr, 0u);
         }
     }
     ctx.eax = kS_OK;
     ctx.ret_stdcall(mem, 16u);
+}
+
+void com_dev_draw_indexed_primitive(CpuContext& ctx, GuestMemory& mem) {
+    // (this, PrimitiveType, BaseVertexIndex, MinVertexIndex, NumVertices, StartIndex, PrimitiveCount) -> 28 bytes
+    const uint32_t prim_type  = ctx.arg32(mem, 1);
+    const int32_t  base_vidx  = static_cast<int32_t>(ctx.arg32(mem, 2));
+    const uint32_t min_vidx   = ctx.arg32(mem, 3);
+    const uint32_t num_verts  = ctx.arg32(mem, 4);
+    const uint32_t start_idx  = ctx.arg32(mem, 5);
+    const uint32_t prim_count = ctx.arg32(mem, 6);
+    if (auto* im = active_impl(); im && prim_count > 0u && im->current_vb_va != 0u && im->current_vb_stride > 0u) {
+        std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        auto iit = im->buffers.find(im->current_ib_id);
+        if (iit != im->buffers.end() && iit->second.data_va != 0u) {
+            const BufferRecord& ib = iit->second;
+            const uint32_t idx_fmt  = ib.format ? ib.format : 101u;
+            const uint32_t idx_elem = (idx_fmt == 102u) ? 4u : 2u;
+            const uint32_t idx_cnt  = vertex_count_for_prim(prim_type, prim_count);
+            const uint64_t idx_off  = static_cast<uint64_t>(start_idx) * idx_elem;
+            const uint64_t idx_need = static_cast<uint64_t>(idx_cnt) * idx_elem;
+            if (idx_off + idx_need <= ib.size) {
+                const uint32_t idx_va = ib.data_va + static_cast<uint32_t>(idx_off);
+                const int64_t vbase_s = static_cast<int64_t>(im->current_vb_va) +
+                                        static_cast<int64_t>(base_vidx) * static_cast<int64_t>(im->current_vb_stride);
+                if (vbase_s > 0 && vbase_s < static_cast<int64_t>(GuestMemory::kArenaSize)) {
+                    const uint32_t vbase_va = static_cast<uint32_t>(vbase_s);
+                    uint32_t avail_verts = 65536u;
+                    if (auto vit = im->buffers.find(im->current_vb_id); vit != im->buffers.end()) {
+                        const BufferRecord& vb = vit->second;
+                        if (vbase_va >= vb.data_va && vbase_va < vb.data_va + vb.size) {
+                            avail_verts = (vb.data_va + vb.size - vbase_va) / im->current_vb_stride;
+                        } else {
+                            avail_verts = 0u;
+                        }
+                    }
+                    const uint64_t need64 = static_cast<uint64_t>(min_vidx) + num_verts;
+                    uint32_t total_verts = (need64 == 0u || need64 > avail_verts)
+                        ? avail_verts
+                        : static_cast<uint32_t>(need64);
+                    if (total_verts > 0u &&
+                        mem.in_bounds(vbase_va, static_cast<size_t>(total_verts) * im->current_vb_stride) &&
+                        mem.in_bounds(idx_va, static_cast<size_t>(idx_need))) {
+                        im->execute_draw(mem, prim_type, prim_count, mem.cptr(vbase_va),
+                                         total_verts, im->current_vb_stride, mem.cptr(idx_va), idx_fmt);
+                    }
+                }
+            }
+        }
+    }
+    ctx.eax = kS_OK;
+    ctx.ret_stdcall(mem, 28u);
 }
 
 void com_dev_set_fvf(CpuContext& ctx, GuestMemory& mem) {
@@ -2286,11 +2615,97 @@ void com_dev_set_stream_source(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t stride = ctx.arg32(mem, 4);
     if (auto* im = active_impl(); im && stream == 0u) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
-        im->current_vb_va     = vb_va ? (mem.r32(vb_va + 4u) + off_b) : 0u;
+        if (BufferRecord* br = im->find_buffer_by_va(mem, vb_va)) {
+            im->current_vb_id     = br->id;
+            im->current_vb_offset = std::min(off_b, br->size);
+            im->current_vb_va     = br->data_va + im->current_vb_offset;
+        } else {
+            im->current_vb_id     = 0u;
+            im->current_vb_offset = 0u;
+            im->current_vb_va     = 0u;
+        }
         im->current_vb_stride = stride;
     }
     ctx.eax = kS_OK;
     ctx.ret_stdcall(mem, 20u);
+}
+
+void com_dev_set_indices(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t ib_va = ctx.arg32(mem, 1);
+    if (auto* im = active_impl()) {
+        std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        if (BufferRecord* br = im->find_buffer_by_va(mem, ib_va)) {
+            im->current_ib_id = br->id;
+            im->current_ib_va = ib_va;
+        } else {
+            im->current_ib_id = 0u;
+            im->current_ib_va = 0u;
+        }
+    }
+    ctx.eax = kS_OK;
+    ctx.ret_stdcall(mem, 8u);
+}
+
+void com_dev_get_indices(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t pp_ib = ctx.arg32(mem, 1);
+    if (auto* im = active_impl(); im && pp_ib && mem.in_bounds(pp_ib, 4u)) {
+        std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        mem.w32(pp_ib, im->current_ib_va);
+        if (im->current_ib_va != 0u && mem.in_bounds(im->current_ib_va + 8u, 4u)) {
+            mem.w32(im->current_ib_va + 8u, mem.r32(im->current_ib_va + 8u) + 1u);
+        }
+    }
+    ctx.eax = kS_OK;
+    ctx.ret_stdcall(mem, 8u);
+}
+
+// ---------------------------------------------------------------------------
+// IDirect3DVertexBuffer9 / IDirect3DIndexBuffer9 Methods
+// ---------------------------------------------------------------------------
+void com_buf_lock(CpuContext& ctx, GuestMemory& mem) {
+    // (this, OffsetToLock, SizeToLock, ppbData, Flags) -> 20 bytes
+    const uint32_t self_va = ctx.arg32(mem, 0);
+    const uint32_t offset  = ctx.arg32(mem, 1);
+    const uint32_t pp_data = ctx.arg32(mem, 3);
+    if (auto* im = active_impl(); im && pp_data && mem.in_bounds(pp_data, 4u)) {
+        std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        if (BufferRecord* br = im->find_buffer_by_va(mem, self_va)) {
+            const uint32_t clamped_off = std::min(offset, br->size);
+            mem.w32(pp_data, br->data_va + clamped_off);
+            ctx.eax = kS_OK;
+            ctx.ret_stdcall(mem, 20u);
+            return;
+        }
+    }
+    ctx.eax = kD3DERR_INVALIDCALL;
+    ctx.ret_stdcall(mem, 20u);
+}
+
+void com_buf_unlock(CpuContext& ctx, GuestMemory& mem) {
+    ctx.eax = kS_OK;
+    ctx.ret_stdcall(mem, 4u);
+}
+
+void com_buf_get_desc(CpuContext& ctx, GuestMemory& mem) {
+    // (this, pDesc) -> 8 bytes (D3DVERTEXBUFFER_DESC = 24B, D3DINDEXBUFFER_DESC = 20B)
+    const uint32_t self_va = ctx.arg32(mem, 0);
+    const uint32_t desc_va = ctx.arg32(mem, 1);
+    if (auto* im = active_impl(); im && desc_va && mem.in_bounds(desc_va, 24u)) {
+        std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        if (BufferRecord* br = im->find_buffer_by_va(mem, self_va)) {
+            mem.w32(desc_va + 0u,  br->is_index ? br->format : kFmtUnknown);
+            mem.w32(desc_va + 4u,  br->is_index ? 7u : 6u); // D3DRTYPE_INDEXBUFFER / D3DRTYPE_VERTEXBUFFER
+            mem.w32(desc_va + 8u,  0u);
+            mem.w32(desc_va + 12u, 1u); // D3DPOOL_MANAGED
+            mem.w32(desc_va + 16u, br->size);
+            if (!br->is_index) mem.w32(desc_va + 20u, br->fvf);
+            ctx.eax = kS_OK;
+            ctx.ret_stdcall(mem, 8u);
+            return;
+        }
+    }
+    ctx.eax = kD3DERR_INVALIDCALL;
+    ctx.ret_stdcall(mem, 8u);
 }
 
 // ---------------------------------------------------------------------------
@@ -2350,7 +2765,7 @@ void com_tex_get_surface_level(CpuContext& ctx, GuestMemory& mem) {
             sr.format        = tr->format;
             sr.usage         = tr->usage;
             sr.mtl_tex       = tr->mtl_tex;
-            sr.guest_va      = im->alloc_com_object(mem, im->vtbl_surface, sr.id, kKindSurface);
+            sr.guest_va      = im->alloc_com_object(mem, im->vtbl_surface, sr.id, kKindSurface, true);
             if (level == 0u) tr->surface_guest_va = sr.guest_va;
             im->surfaces[sr.id] = sr;
             mem.w32(pp_surf, sr.guest_va);
@@ -2669,6 +3084,22 @@ void com_fx_set_value(CpuContext& ctx, GuestMemory& mem) {
         if (EffectRecord* fx = im->find_effect_by_va(mem, fx_va)) {
             const std::string pname = resolve_effect_param_name(*fx, mem, hparam);
             apply_effect_param_value(*im, *fx, mem, pname, data_va, bytes);
+        }
+    }
+    ctx.eax = kS_OK;
+    ctx.ret_stdcall(mem, 16u);
+}
+
+void com_fx_set_float_array(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t fx_va   = ctx.arg32(mem, 0);
+    const uint32_t hparam  = ctx.arg32(mem, 1);
+    const uint32_t data_va = ctx.arg32(mem, 2);
+    const uint32_t count   = ctx.arg32(mem, 3);
+    if (auto* im = active_impl()) {
+        std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        if (EffectRecord* fx = im->find_effect_by_va(mem, fx_va)) {
+            const std::string pname = resolve_effect_param_name(*fx, mem, hparam);
+            apply_effect_param_value(*im, *fx, mem, pname, data_va, count * 4u);
         }
     }
     ctx.eax = kS_OK;
@@ -3024,16 +3455,16 @@ void D3D9MetalBridge::Impl::init_com_vtables(GuestMemory& mem) {
     dev_slots[23] = &com_dev_create_texture;
     dev_slots[24] = &com_stub_ret<40u, kE_NOTIMPL>;
     dev_slots[25] = &com_stub_ret<32u, kE_NOTIMPL>;
-    dev_slots[26] = &com_stub_ret<28u, kS_OK>;
-    dev_slots[27] = &com_stub_ret<28u, kS_OK>;
+    dev_slots[26] = &com_dev_create_vertex_buffer;
+    dev_slots[27] = &com_dev_create_index_buffer;
     dev_slots[28] = &com_dev_create_render_target;
     dev_slots[29] = &com_dev_create_depth_stencil_surface;
     dev_slots[30] = &com_stub_ret<20u, kS_OK>; // UpdateSurface
     dev_slots[31] = &com_stub_ret<12u, kS_OK>; // UpdateTexture
     dev_slots[32] = &com_stub_ret<12u, kS_OK>; // GetRenderTargetData
     dev_slots[33] = &com_stub_ret<12u, kS_OK>; // GetFrontBufferData
-    dev_slots[34] = &com_stub_ret<24u, kS_OK>; // StretchRect
-    dev_slots[35] = &com_stub_ret<16u, kS_OK>; // ColorFill
+    dev_slots[34] = &com_dev_stretch_rect;
+    dev_slots[35] = &com_dev_color_fill;
     dev_slots[36] = &com_dev_create_offscreen_plain_surface;
     dev_slots[37] = &com_dev_set_render_target;
     dev_slots[38] = &com_dev_get_render_target;
@@ -3080,7 +3511,7 @@ void D3D9MetalBridge::Impl::init_com_vtables(GuestMemory& mem) {
     dev_slots[79] = &com_stub_ret<8u, kS_OK>;  // SetNPatchMode
     dev_slots[80] = &com_stub_ret<4u, 0u>;     // GetNPatchMode
     dev_slots[81] = &com_dev_draw_primitive;
-    dev_slots[82] = &com_stub_ret<28u, kS_OK>; // DrawIndexedPrimitive
+    dev_slots[82] = &com_dev_draw_indexed_primitive;
     dev_slots[83] = &com_dev_draw_primitive_up;
     dev_slots[84] = &com_dev_draw_indexed_primitive_up;
     dev_slots[85] = &com_stub_ret<24u, kS_OK>; // ProcessVertices
@@ -3102,8 +3533,8 @@ void D3D9MetalBridge::Impl::init_com_vtables(GuestMemory& mem) {
     dev_slots[101] = &com_stub_ret<20u, kS_OK>;
     dev_slots[102] = &com_stub_ret<12u, kS_OK>;
     dev_slots[103] = &com_stub_ret<12u, kS_OK>;
-    dev_slots[104] = &com_stub_ret<8u, kS_OK>;  // SetIndices
-    dev_slots[105] = &com_stub_ret<8u, kS_OK>;  // GetIndices
+    dev_slots[104] = &com_dev_set_indices;
+    dev_slots[105] = &com_dev_get_indices;
     dev_slots[106] = &com_stub_ret<12u, kS_OK>; // CreatePixelShader
     dev_slots[107] = &com_stub_ret<8u, kS_OK>;  // SetPixelShader
     dev_slots[108] = &com_stub_ret<8u, kS_OK>;  // GetPixelShader
@@ -3124,7 +3555,7 @@ void D3D9MetalBridge::Impl::init_com_vtables(GuestMemory& mem) {
         &com_unknown_query_interface,      // 0
         &com_unknown_addref,               // 1
         &com_unknown_release,              // 2
-        &com_dev_get_direct3d,             // 3 GetDevice (same arg count 8 bytes)
+        &com_resource_get_device,          // 3 GetDevice
         &com_stub_ret<20u, kS_OK>,         // 4 SetPrivateData
         &com_stub_ret<16u, kE_FAIL>,       // 5 GetPrivateData
         &com_stub_ret<8u, kS_OK>,          // 6 FreePrivateData
@@ -3150,7 +3581,7 @@ void D3D9MetalBridge::Impl::init_com_vtables(GuestMemory& mem) {
         &com_unknown_query_interface,      // 0
         &com_unknown_addref,               // 1
         &com_unknown_release,              // 2
-        &com_dev_get_direct3d,             // 3 GetDevice
+        &com_resource_get_device,          // 3 GetDevice
         &com_stub_ret<20u, kS_OK>,         // 4 SetPrivateData
         &com_stub_ret<16u, kE_FAIL>,       // 5 GetPrivateData
         &com_stub_ret<8u, kS_OK>,          // 6 FreePrivateData
@@ -3200,7 +3631,7 @@ void D3D9MetalBridge::Impl::init_com_vtables(GuestMemory& mem) {
     fx_slots[29] = &com_stub_ret<16u, kS_OK>;
     fx_slots[30] = &com_fx_set_float;
     fx_slots[31] = &com_stub_ret<12u, kS_OK>;  // GetFloat
-    fx_slots[32] = &com_fx_set_value;          // SetFloatArray (hParam, pData, Count -> wait: 16 bytes)
+    fx_slots[32] = &com_fx_set_float_array;    // SetFloatArray (hParam, pData, Count)
     fx_slots[33] = &com_stub_ret<16u, kS_OK>;
     fx_slots[34] = &com_fx_set_vector;
     fx_slots[35] = &com_stub_ret<12u, kS_OK>;
@@ -3227,7 +3658,7 @@ void D3D9MetalBridge::Impl::init_com_vtables(GuestMemory& mem) {
     fx_slots[65] = &com_stub_ret<4u, kS_OK>;   // CommitChanges (+0x104)
     fx_slots[66] = &com_fx_end_pass;           // EndPass (+0x108)
     fx_slots[67] = &com_fx_end;                // End (+0x10c)
-    fx_slots[68] = &com_dev_get_direct3d;      // GetDevice (8 bytes)
+    fx_slots[68] = &com_resource_get_device;   // GetDevice (8 bytes)
     fx_slots[69] = &com_stub_ret<4u, kS_OK>;   // OnLostDevice (+0x114)
     fx_slots[70] = &com_stub_ret<4u, kS_OK>;   // OnResetDevice (+0x118)
     fx_slots[71] = &com_stub_ret<8u, kS_OK>;
@@ -3240,7 +3671,7 @@ void D3D9MetalBridge::Impl::init_com_vtables(GuestMemory& mem) {
         &com_unknown_query_interface,      // 0
         &com_unknown_addref,               // 1
         &com_unknown_release,              // 2
-        &com_dev_get_direct3d,             // 3 GetDevice
+        &com_resource_get_device,          // 3 GetDevice
         &com_stub_ret<8u, kS_OK>,          // 4 GetDescA
         &com_stub_ret<8u, kS_OK>,          // 5 GetDescW
         &com_stub_ret<8u, 1u>,             // 6 GetTextMetricsA
@@ -3255,6 +3686,42 @@ void D3D9MetalBridge::Impl::init_com_vtables(GuestMemory& mem) {
         &com_font_draw_text_a,             // 15 DrawTextW (+0x3c)
         &com_stub_ret<4u, kS_OK>,          // 16 OnLostDevice (+0x40)
         &com_stub_ret<4u, kS_OK>,          // 17 OnResetDevice (+0x44)
+    });
+
+    // 7. IDirect3DVertexBuffer9 (14 slots)
+    vtbl_vbuf = build_vtable(mem, {
+        &com_unknown_query_interface,      // 0
+        &com_unknown_addref,               // 1
+        &com_unknown_release,              // 2
+        &com_resource_get_device,          // 3 GetDevice
+        &com_stub_ret<20u, kS_OK>,         // 4 SetPrivateData
+        &com_stub_ret<16u, kE_FAIL>,       // 5 GetPrivateData
+        &com_stub_ret<8u, kS_OK>,          // 6 FreePrivateData
+        &com_stub_ret<8u, 0u>,             // 7 SetPriority
+        &com_stub_ret<4u, 0u>,             // 8 GetPriority
+        &com_stub_ret<4u, kS_OK>,          // 9 PreLoad
+        &com_stub_ret<4u, 6u>,             // 10 GetType = D3DRTYPE_VERTEXBUFFER
+        &com_buf_lock,                     // 11 Lock (+0x2c)
+        &com_buf_unlock,                   // 12 Unlock (+0x30)
+        &com_buf_get_desc,                 // 13 GetDesc (+0x34)
+    });
+
+    // 8. IDirect3DIndexBuffer9 (14 slots)
+    vtbl_ibuf = build_vtable(mem, {
+        &com_unknown_query_interface,      // 0
+        &com_unknown_addref,               // 1
+        &com_unknown_release,              // 2
+        &com_resource_get_device,          // 3 GetDevice
+        &com_stub_ret<20u, kS_OK>,         // 4 SetPrivateData
+        &com_stub_ret<16u, kE_FAIL>,       // 5 GetPrivateData
+        &com_stub_ret<8u, kS_OK>,          // 6 FreePrivateData
+        &com_stub_ret<8u, 0u>,             // 7 SetPriority
+        &com_stub_ret<4u, 0u>,             // 8 GetPriority
+        &com_stub_ret<4u, kS_OK>,          // 9 PreLoad
+        &com_stub_ret<4u, 7u>,             // 10 GetType = D3DRTYPE_INDEXBUFFER
+        &com_buf_lock,                     // 11 Lock (+0x2c)
+        &com_buf_unlock,                   // 12 Unlock (+0x30)
+        &com_buf_get_desc,                 // 13 GetDesc (+0x34)
     });
 }
 
@@ -3357,6 +3824,10 @@ bool D3D9MetalBridge::init(void* cametal_layer, int width, int height) {
 
     impl_->initialized = true;
     if (active() == nullptr) set_active(this);
+    hle_win32_log("D3D9MetalBridge::init %dx%d layer=%s lib=%s",
+                  impl_->drawable_width, impl_->drawable_height,
+                  impl_->metal_layer ? "ok" : "nil",
+                  impl_->shader_lib ? "ok" : "MISSING");
     return true;
 }
 
@@ -3400,6 +3871,22 @@ void D3D9MetalBridge::shutdown() {
     impl_->fill_scratch_va     = 0u;
     impl_->font_scratch_tex_id = 0u;
     impl_->font_scratch_tex_va = 0u;
+    impl_->current_vb_id       = 0u;
+    impl_->current_vb_offset   = 0u;
+    impl_->current_vb_va       = 0u;
+    impl_->current_ib_id       = 0u;
+    impl_->current_ib_va       = 0u;
+    impl_->draw_calls          = 0u;
+    impl_->clear_calls         = 0u;
+    impl_->present_calls       = 0u;
+    impl_->create_device_calls = 0u;
+    impl_->create_tex_calls    = 0u;
+    impl_->create_fx_calls     = 0u;
+    impl_->create_vb_calls     = 0u;
+    impl_->create_ib_calls     = 0u;
+    impl_->pso_failures        = 0u;
+    impl_->draw_dropped_no_enc = 0u;
+    impl_->draw_dropped_no_pso = 0u;
     impl_->initialized     = false;
     if (active() == this) set_active(nullptr);
 }
@@ -3455,6 +3942,30 @@ uint64_t D3D9MetalBridge::draw_call_count() const noexcept {
     return impl_->draw_calls;
 }
 
+std::string D3D9MetalBridge::debug_stats() const {
+    std::lock_guard<std::recursive_mutex> lk(impl_->mtx);
+    char buf[384] = {};
+    std::snprintf(
+        buf, sizeof(buf),
+        "dev=%llu clr=%llu drw=%llu prs=%llu tex=%llu(%zu) fx=%llu vb=%llu ib=%llu\n"
+        "psoFail=%llu dropEnc=%llu dropPso=%llu vram=%.1fMB lib=%s",
+        static_cast<unsigned long long>(impl_->create_device_calls),
+        static_cast<unsigned long long>(impl_->clear_calls),
+        static_cast<unsigned long long>(impl_->draw_calls),
+        static_cast<unsigned long long>(impl_->present_calls),
+        static_cast<unsigned long long>(impl_->create_tex_calls),
+        impl_->textures.size(),
+        static_cast<unsigned long long>(impl_->create_fx_calls),
+        static_cast<unsigned long long>(impl_->create_vb_calls),
+        static_cast<unsigned long long>(impl_->create_ib_calls),
+        static_cast<unsigned long long>(impl_->pso_failures),
+        static_cast<unsigned long long>(impl_->draw_dropped_no_enc),
+        static_cast<unsigned long long>(impl_->draw_dropped_no_pso),
+        static_cast<double>(impl_->cached_texture_bytes) / (1024.0 * 1024.0),
+        impl_->shader_lib ? "ok" : "MISSING");
+    return std::string(buf);
+}
+
 // ---------------------------------------------------------------------------
 // All 23 Direct3D 9 & D3DX9_36 IAT Handlers (0x0051B398..0x0051B3F4)
 // ---------------------------------------------------------------------------
@@ -3467,6 +3978,7 @@ bool D3D9MetalBridge::handle_d3d_iat(uint32_t iat_va, const char* api_name, CpuC
         case d3d_iat::kDirect3DCreate9: {
             if (impl_->d3d9_guest_va == 0u) {
                 impl_->d3d9_guest_va = impl_->alloc_com_object(mem, impl_->vtbl_d3d9, 1u, kKindD3D9);
+                hle_win32_log("Direct3DCreate9 -> 0x%08x", impl_->d3d9_guest_va);
             }
             ctx.eax = impl_->d3d9_guest_va;
             ctx.ret_stdcall(mem, 4u);
@@ -3822,7 +4334,8 @@ bool D3D9MetalBridge::handle_d3d_iat(uint32_t iat_va, const char* api_name, CpuC
                 impl_->cached_texture_bytes += rec.gpu_bytes;
                 impl_->evict_lru_to_budget(kTextureCacheLimitBytes);
 
-                rec.guest_va = impl_->alloc_com_object(mem, impl_->vtbl_texture, rec.id, kKindTexture);
+                rec.guest_va = impl_->alloc_com_object(mem, impl_->vtbl_texture, rec.id, kKindTexture, true);
+                ++impl_->create_tex_calls;
                 impl_->textures[rec.id] = std::move(rec);
 
                 if (pp_tex && mem.in_bounds(pp_tex, 4u)) mem.w32(pp_tex, impl_->textures[rec.id].guest_va);
@@ -3948,7 +4461,13 @@ bool D3D9MetalBridge::handle_d3d_iat(uint32_t iat_va, const char* api_name, CpuC
                 if (data_va && sz >= 24u && mem.in_bounds(data_va, sz)) {
                     parse_cfx_metadata(mem.cptr(data_va), sz, fx);
                 }
-                fx.guest_va = impl_->alloc_com_object(mem, impl_->vtbl_effect, fx.id, kKindEffect);
+                fx.guest_va = impl_->alloc_com_object(mem, impl_->vtbl_effect, fx.id, kKindEffect, true);
+                ++impl_->create_fx_calls;
+                if (impl_->create_fx_calls <= 3u) {
+                    hle_win32_log("D3DXCreateEffect #%llu -> techs=%zu params=%zu",
+                                  static_cast<unsigned long long>(impl_->create_fx_calls),
+                                  fx.techniques.size(), fx.parameters.size());
+                }
                 impl_->effects[fx.id] = std::move(fx);
                 mem.w32(pp_fx, impl_->effects[fx.id].guest_va);
                 ctx.eax = kS_OK;
@@ -3975,7 +4494,7 @@ bool D3D9MetalBridge::handle_d3d_iat(uint32_t iat_va, const char* api_name, CpuC
                 if (face_va) fr.face_name = mem.read_cstring(face_va, 64u);
                 fr.ct_font = CTFontCreateWithName(CFSTR("HiraginoSans-W3"),
                                                   static_cast<CGFloat>(fr.height), nullptr);
-                fr.guest_va = impl_->alloc_com_object(mem, impl_->vtbl_font, fr.id, kKindFont);
+                fr.guest_va = impl_->alloc_com_object(mem, impl_->vtbl_font, fr.id, kKindFont, true);
                 impl_->fonts[fr.id] = fr;
                 mem.w32(pp_font, fr.guest_va);
                 ctx.eax = kS_OK;
