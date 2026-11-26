@@ -5,18 +5,19 @@
 
 typedef NS_ENUM(NSInteger, MBAATouchControlTag) {
     MBAATouchControlDPad = 0,
-    MBAATouchControlBtnA,        // PS2 Square (□)  -> A (Light)
-    MBAATouchControlBtnB,        // PS2 Triangle (△)-> B (Medium)
-    MBAATouchControlBtnC,        // PS2 Circle (○)  -> C (Heavy)
-    MBAATouchControlBtnD,        // PS2 Cross (×)   -> D (Shield)
-    MBAATouchControlBtnE,        // PS2 L1          -> E (Quick Action)
-    MBAATouchControlDashMacro,   // PS2 R1          -> Dash macro (A + B)
-    MBAATouchControlHeatMacro,   // PS2 R2          -> Heat macro (A + B + C)
-    MBAATouchControlStart,       // PS2 Start (▷)   -> Start
-    MBAATouchControlCoin,        // PS2 Select (▭)  -> Coin / Select
-    MBAATouchControlFN1,         // PS2 L2          -> FN1 (Training Reset)
-    MBAATouchControlFN2,         // PS2 Double-Ring (◎) -> FN2
-    MBAATouchControlPause,       // Top-Right (||)  -> Pause overlay toggle
+    MBAATouchControlBtnA,        // PS2 Square (□)  -> A (Light / Punch / Confirm)
+    MBAATouchControlBtnB,        // PS2 Cross (×)   -> B (Medium / Low Kick / Cancel)
+    MBAATouchControlBtnC,        // PS2 Circle (○)  -> C (Heavy / High Kick)
+    MBAATouchControlBtnD,        // PS2 Triangle (△)-> D (Shield / Magic)
+    MBAATouchControlBtnE,        // PS2 R1          -> E (Quick Action)
+    MBAATouchControlThrowMacro,  // PS2 L1          -> Throw / Evade macro (A + D)
+    MBAATouchControlDashMacro,   // PS2 R2          -> Dash macro (A + B)
+    MBAATouchControlHeatMacro,   // PS2 L2          -> Heat macro (A + B + C)
+    MBAATouchControlStart,       // PS2 Start (▷)   -> Start / Pause game
+    MBAATouchControlCoin,        // Reserved Coin / Select flag
+    MBAATouchControlFN1,         // PS2 Select (▭)  -> FN1 (Training Reset)
+    MBAATouchControlFN2,         // PS2 Double-Ring (◎) -> FN2 (Training Function 2)
+    MBAATouchControlPause,       // Top-Right (||)  -> iOS Pause & Debug overlay toggle
     MBAATouchControlCount
 };
 
@@ -168,37 +169,37 @@ static UIColor* ps2PressedFillColor(void) {
     [_dpadBaseView.layer addSublayer:_dpadLeftLayer];
     [_dpadBaseView.layer addSublayer:_dpadRightLayer];
 
-    // Top-Left Shoulders: L2 (FN1) stacked above L1 (E)
-    [self addButtonZone:MBAATouchControlFN1
+    // Top-Left Shoulders: L2 (Heat A+B+C) stacked above L1 (Throw A+D)
+    [self addButtonZone:MBAATouchControlHeatMacro
             visualStyle:MBAAPS2VisualStyleShoulderRect
                   title:@"L2"
             circularHit:NO
              hitPadding:6.0];
-    [self addButtonZone:MBAATouchControlBtnE
+    [self addButtonZone:MBAATouchControlThrowMacro
             visualStyle:MBAAPS2VisualStyleShoulderRect
                   title:@"L1"
             circularHit:NO
              hitPadding:6.0];
 
-    // Top-Right Shoulders: R2 (Heat A+B+C) stacked above R1 (Dash A+B)
-    [self addButtonZone:MBAATouchControlHeatMacro
+    // Top-Right Shoulders: R2 (Dash A+B) stacked above R1 (E Quick Action)
+    [self addButtonZone:MBAATouchControlDashMacro
             visualStyle:MBAAPS2VisualStyleShoulderRect
                   title:@"R2"
             circularHit:NO
              hitPadding:6.0];
-    [self addButtonZone:MBAATouchControlDashMacro
+    [self addButtonZone:MBAATouchControlBtnE
             visualStyle:MBAAPS2VisualStyleShoulderRect
                   title:@"R1"
             circularHit:NO
              hitPadding:6.0];
 
-    // Bottom-Right PS2 Diamond Face Buttons: □ (A), △ (B), ○ (C), × (D)
+    // Bottom-Right PS2 Diamond Face Buttons: □ (A), △ (D), ○ (C), × (B)
     [self addButtonZone:MBAATouchControlBtnA
             visualStyle:MBAAPS2VisualStyleFaceSquare
                   title:nil
             circularHit:YES
              hitPadding:8.0];
-    [self addButtonZone:MBAATouchControlBtnB
+    [self addButtonZone:MBAATouchControlBtnD
             visualStyle:MBAAPS2VisualStyleFaceTriangle
                   title:nil
             circularHit:YES
@@ -208,14 +209,14 @@ static UIColor* ps2PressedFillColor(void) {
                   title:nil
             circularHit:YES
              hitPadding:8.0];
-    [self addButtonZone:MBAATouchControlBtnD
+    [self addButtonZone:MBAATouchControlBtnB
             visualStyle:MBAAPS2VisualStyleFaceCross
                   title:nil
             circularHit:YES
              hitPadding:8.0];
 
-    // Bottom-Center PS2 Trio: ▭ (SELECT/Coin), ◎ (FN2), ▷ (START)
-    [self addButtonZone:MBAATouchControlCoin
+    // Bottom-Center PS2 Trio: ▭ (SELECT -> FN1), ◎ (FN2), ▷ (START)
+    [self addButtonZone:MBAATouchControlFN1
             visualStyle:MBAAPS2VisualStyleSelectRect
                   title:nil
             circularHit:NO
@@ -620,23 +621,23 @@ static UIColor* ps2PressedFillColor(void) {
     CGFloat r2X = rightClusterCenterX - shoulderW * 0.5;
     CGFloat l1Y = shoulderTopY + shoulderH + shoulderGap;
 
-    [self setFrame:CGRectMake(l2X, shoulderTopY, shoulderW, shoulderH) forTag:MBAATouchControlFN1 scale:scale];
-    [self setFrame:CGRectMake(l2X, l1Y,          shoulderW, shoulderH) forTag:MBAATouchControlBtnE scale:scale];
-    [self setFrame:CGRectMake(r2X, shoulderTopY, shoulderW, shoulderH) forTag:MBAATouchControlHeatMacro scale:scale];
-    [self setFrame:CGRectMake(r2X, l1Y,          shoulderW, shoulderH) forTag:MBAATouchControlDashMacro scale:scale];
+    [self setFrame:CGRectMake(l2X, shoulderTopY, shoulderW, shoulderH) forTag:MBAATouchControlHeatMacro scale:scale];
+    [self setFrame:CGRectMake(l2X, l1Y,          shoulderW, shoulderH) forTag:MBAATouchControlThrowMacro scale:scale];
+    [self setFrame:CGRectMake(r2X, shoulderTopY, shoulderW, shoulderH) forTag:MBAATouchControlDashMacro scale:scale];
+    [self setFrame:CGRectMake(r2X, l1Y,          shoulderW, shoulderH) forTag:MBAATouchControlBtnE scale:scale];
 
-    // Bottom-Right: PS2 Diamond Face Buttons (□ Left=A, △ Top=B, ○ Right=C, × Bottom=D)
+    // Bottom-Right: PS2 Diamond Face Buttons (□ Left=A, △ Top=D, ○ Right=C, × Bottom=B)
     CGFloat faceR = faceDia * 0.5;
     [self setFrame:CGRectMake(rightClusterCenterX - diamondOffset - faceR, clusterCenterY - faceR,                 faceDia, faceDia)
             forTag:MBAATouchControlBtnA scale:scale];
     [self setFrame:CGRectMake(rightClusterCenterX - faceR,                 clusterCenterY - diamondOffset - faceR, faceDia, faceDia)
-            forTag:MBAATouchControlBtnB scale:scale];
+            forTag:MBAATouchControlBtnD scale:scale];
     [self setFrame:CGRectMake(rightClusterCenterX + diamondOffset - faceR, clusterCenterY - faceR,                 faceDia, faceDia)
             forTag:MBAATouchControlBtnC scale:scale];
     [self setFrame:CGRectMake(rightClusterCenterX - faceR,                 clusterCenterY + diamondOffset - faceR, faceDia, faceDia)
-            forTag:MBAATouchControlBtnD scale:scale];
+            forTag:MBAATouchControlBtnB scale:scale];
 
-    // Bottom-Center Cluster: ▭ SELECT (Coin), ◎ FN2, ▷ START
+    // Bottom-Center Cluster: ▭ SELECT (FN1), ◎ FN2, ▷ START
     CGFloat selectW = round(42.0 * scale);
     CGFloat selectH = round(24.0 * scale);
     CGFloat analogDia = round(24.0 * scale);
@@ -648,7 +649,7 @@ static UIColor* ps2PressedFillColor(void) {
     CGFloat centerRowY = h - bottomMargin - selectH;
     CGFloat curX = midX - totalCenterW * 0.5;
 
-    [self setFrame:CGRectMake(curX, centerRowY, selectW, selectH) forTag:MBAATouchControlCoin scale:scale];
+    [self setFrame:CGRectMake(curX, centerRowY, selectW, selectH) forTag:MBAATouchControlFN1 scale:scale];
     curX += selectW + centerGap;
     [self setFrame:CGRectMake(curX, centerRowY + (selectH - analogDia) * 0.5, analogDia, analogDia) forTag:MBAATouchControlFN2 scale:scale];
     curX += analogDia + centerGap;
@@ -1000,6 +1001,9 @@ static UIColor* ps2PressedFillColor(void) {
             case MBAATouchControlBtnC: mask |= MBAAVirtualButtonC; break;
             case MBAATouchControlBtnD: mask |= MBAAVirtualButtonD; break;
             case MBAATouchControlBtnE: mask |= MBAAVirtualButtonE; break;
+            case MBAATouchControlThrowMacro:
+                mask |= (MBAAVirtualButtonA | MBAAVirtualButtonD);
+                break;
             case MBAATouchControlDashMacro:
                 mask |= (MBAAVirtualButtonDash | MBAAVirtualButtonA | MBAAVirtualButtonB);
                 break;
