@@ -8,7 +8,7 @@
  *   - 0x00300000..0x0030FFFF : Synthetic Win32 TEB/PEB/SEH sentinel page (fs:[0])
  *   - 0x00400000..0x007FFFFF : MBAA.exe PE image (.text, .rdata, .data, .rsrc, .new00)
  *   - 0x00800000..0x009FFFFF : 2 MiB primary guest thread stack
- *   - 0x00A00000..0x00CFFFFF : Secondary guest thread stacks (64 KiB each)
+ *   - 0x00A00000..0x00DFFFFF : Secondary guest thread stacks (16 x 256 KiB each)
  *   - 0x00F00000..0x00FFFFFF : Synthetic COM objects, vtables, handles, and IAT thunks
  *   - 0x01000000..0x08FFFFFF : 128 MiB guest heap arena (sized for iPhone SE 2020 3 GB RAM)
  *   - 0x09000000..0x0FFFFFFF : Overflow/large texture/archive scratch heap (112 MiB)
@@ -16,9 +16,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace mbaa_recomp {
@@ -124,27 +128,35 @@ public:
     [[nodiscard]] const std::string& last_error() const noexcept { return last_error_; }
 
 private:
-    struct AllocBlock {
-        uint32_t va   = 0;
-        uint32_t size = 0;
-    };
+    static constexpr uint32_t kMinAllocAlign        = 16u;
+    static constexpr uint32_t kThreadStackSlotCount = (kThreadStackLimit - kThreadStackBase) / kThreadStackSize;
+    static_assert(kThreadStackSlotCount <= 32u, "Thread stack bitmask assumes <= 32 fixed slots");
 
     uint8_t* base_ = nullptr;
     bool     using_mmap_ = false;
+    uint32_t host_page_size_ = 16384u;
 
     mutable std::mutex alloc_mutex_;
-    uint32_t heap_cursor_        = kHeapBase;
-    uint32_t thunk_cursor_       = kThunkPageBase;
-    uint32_t thread_stack_cursor_= kThreadStackBase;
+    uint32_t heap_cursor_              = kHeapBase;
+    uint32_t thunk_cursor_             = kThunkPageBase;
+    uint32_t heap_used_bytes_          = 0u;
+    uint32_t active_thread_stack_mask_ = 0u;
     std::unordered_map<uint32_t, uint32_t> active_allocs_;
-    std::vector<AllocBlock> free_blocks_;
-    std::vector<uint32_t> free_thread_stacks_;
+    std::map<uint32_t, uint32_t> free_blocks_;               // va -> size (coalesced, never touches heap_cursor_)
+    std::set<std::pair<uint32_t, uint32_t>> free_by_size_;   // (size, va) for O(log N) best-fit / lowest-VA reuse
+    std::unordered_set<uint32_t> active_overflow_stacks_;
 
     std::vector<PeSectionInfo> sections_;
     std::string last_error_;
 
-    void init_synthetic_teb_peb();
-    void patch_iat_thunks();
+    void     init_synthetic_teb_peb();
+    void     patch_iat_thunks();
+    uint32_t guest_alloc_locked(uint32_t size, uint32_t align);
+    void     guest_free_locked(uint32_t va);
+    void     insert_free_block_locked(uint32_t va, uint32_t size);
+    void     erase_free_block_locked(uint32_t va, uint32_t size);
+    void     free_range_locked(uint32_t va, uint32_t size);
+    void     advise_reclaimable_locked(uint32_t va, uint32_t size, uint32_t min_bytes) noexcept;
 };
 
 } // namespace mbaa_recomp

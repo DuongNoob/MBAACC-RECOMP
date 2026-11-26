@@ -40,6 +40,22 @@ get_rollback_regions() noexcept;
 /// Computes FNV-1a 32-bit checksum over a 252-byte snapshot buffer.
 [[nodiscard]] uint32_t compute_snapshot_checksum(const uint8_t* bytes, size_t len) noexcept;
 
+/// Unlocks all CCCaster extra Training/Versus stages and restores Stage 55 BGM in GuestMemory.
+///
+/// Mirrors the exact 24 .data/.bss entries from CCCaster v3.1 `hook.dll` (PatchGroup 0x6673cce0):
+///   - Training blacklist (`0x0054CEBC..0x0054CEC4`, 3 dwords -> `0xFF`): unlocks stages
+///     55 (`...and nothing heart`), 57 (`G TABLE`), and 58 (`G TABLE`), preserving 99 and -1.
+///   - Versus/Normal/Random blacklist (`0x0054CF68..0x0054CFB0`, 19 dwords -> `0xFF`): unlocks
+///     stages 3, 4, 18, 20, 21, 23, 31, 32, 43, 44, 47, 49, 50, 51, 52, 54, 55, 57, 58,
+///     preserving 99 and -1.
+///   - Stage 55 BGM table entry (`0x007695E0`, populated from `.\bgm\bgm.txt` by `sub_004dd5d0`):
+///     patches `"bgmme56\0"` -> `"bgmme55\0"` (`0x007695F6 = 0x35`) and loop point high dword
+///     (`0x007695EC = 0x401ECCAA`) so `bgmme55.ogg` plays with its original loop point.
+///
+/// Fast and idempotent; safe to call both after PE load and on each frame (to catch runtime
+/// `bgm.txt` loads/reloads in `sub_004dd5d0`). Returns the count of 32-bit slots updated.
+uint32_t apply_cccaster_stage_unlocks(GuestMemory& mem) noexcept;
+
 class RollbackManager {
 public:
     static constexpr uint32_t kBattleTickVa = 0x007717D8u;
