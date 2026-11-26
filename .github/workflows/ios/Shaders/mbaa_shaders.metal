@@ -164,24 +164,26 @@ fragment float4 ps_mbaa_fixed(
     texture2d<float> tex0 [[texture(MBAA_TEX_STAGE0)]],
     sampler samp0 [[sampler(0)]])
 {
-    float4 base;
-    if (u.has_texture != 0u) {
+    float4 base = in.diffuse;
+    if (u.has_texture != 0u && (u.color_op0 != 1u || u.alpha_op0 != 1u)) {
         float4 t = tex0.sample(samp0, in.texcoord0);
-        // D3DTOP_SELECTARG1 (2) vs D3DTOP_MODULATE (4) vs D3DTOP_ADD (7)
-        if (u.color_op0 == 2u) {
+        // D3DTOP_DISABLE (1) vs SELECTARG1 (2) vs SELECTARG2 (3) vs MODULATE (4) vs ADD (7)
+        if (u.color_op0 == 1u || u.color_op0 == 3u) {
+            base.rgb = in.diffuse.rgb;
+        } else if (u.color_op0 == 2u) {
             base.rgb = t.rgb;
         } else if (u.color_op0 == 7u) {
             base.rgb = saturate(t.rgb + in.diffuse.rgb);
         } else {
             base.rgb = t.rgb * in.diffuse.rgb;
         }
-        if (u.alpha_op0 == 2u) {
+        if (u.alpha_op0 == 1u || u.alpha_op0 == 3u) {
+            base.a = in.diffuse.a;
+        } else if (u.alpha_op0 == 2u) {
             base.a = t.a;
         } else {
             base.a = t.a * in.diffuse.a;
         }
-    } else {
-        base = in.diffuse;
     }
 
     base.rgb = saturate(base.rgb + in.specular.rgb);
@@ -348,21 +350,31 @@ fragment float4 ps_chara_draw(
     float4 rt = tex0.sample(samp0, uv + float2( tx.x,  0.0f));
     float4 dn = tex0.sample(samp0, uv + float2( 0.0f, -tx.y));
 
+    // Exact mirror of sh_chara.cfx blob 2 (TecCharaDraw ps_2_0):
+    //   - Transparent center (c.a == 0):
+    //       0 opaque neighbors -> float4(0) (transparent)
+    //       1 opaque neighbor  -> fx.edge_color
+    //       >=2 opaque         -> float4(accum.rgb / opaque_cnt, 1.0)
+    //   - Opaque center (c.a != 0):
+    //       count TRANSPARENT neighbors (zero_cnt); if zero_cnt <= 1 keep c.a else 1 / zero_cnt
     float4 accum = float4(0.0f);
-    float  count = 0.0f;
-    if (rt.a != 0.0f) { accum += rt; count += 1.0f; }
-    if (lf.a != 0.0f) { accum += lf; count += 1.0f; }
-    if (up.a != 0.0f) { accum += up; count += 1.0f; }
-    if (dn.a != 0.0f) { accum += dn; count += 1.0f; }
+    float  opaque_cnt = 0.0f;
+    if (rt.a != 0.0f) { accum += rt; opaque_cnt += 1.0f; }
+    if (lf.a != 0.0f) { accum += lf; opaque_cnt += 1.0f; }
+    if (up.a != 0.0f) { accum += up; opaque_cnt += 1.0f; }
+    if (dn.a != 0.0f) { accum += dn; opaque_cnt += 1.0f; }
 
-    float4 edge_col = (count == 1.0f) ? fx.edge_color : accum;
-    float4 blended  = (count >= 1.0f) ? edge_col : float4(accum.rgb / max(count, 1.0f), 1.0f);
-    if (count > 1.0f) {
-        blended = float4(accum.rgb / count, 1.0f);
+    float4 empty_col = float4(0.0f);
+    if (opaque_cnt == 1.0f) {
+        empty_col = fx.edge_color;
+    } else if (opaque_cnt >= 2.0f) {
+        empty_col = float4(accum.rgb / opaque_cnt, 1.0f);
     }
 
-    float out_a = (count >= 1.0f && count <= 1.0f) ? c.a : ((count == 0.0f) ? c.a : 1.0f / count);
-    float4 res = (c.a == 0.0f) ? float4(blended.rgb, blended.a) : float4(c.rgb, out_a);
+    float zero_cnt = (dn.a == 0.0f ? 1.0f : 0.0f) + (rt.a == 0.0f ? 1.0f : 0.0f) +
+                     (up.a == 0.0f ? 1.0f : 0.0f) + (lf.a == 0.0f ? 1.0f : 0.0f);
+    float out_a = (zero_cnt <= 1.0f) ? c.a : (1.0f / zero_cnt);
+    float4 res = (c.a == 0.0f) ? empty_col : float4(c.rgb, out_a);
     return res * in.diffuse + in.specular;
 }
 
@@ -380,7 +392,7 @@ fragment float4 ps_chara_draw_ex(
     float4 lf = tex0.sample(samp0, uv + float2(-tx.x,  0.0f));
     float4 c  = tex0.sample(samp0, uv);
 
-    // Pairwise similarity blend matching sh_chara.cfx ps_3_0
+    // Pairwise similarity blend matching sh_chara.cfx blob 1 (TecCharaDrawEx ps_3_0)
     float4 pair_sum = float4(0.0f);
     float  pair_cnt = 0.0f;
     if (dot(rt - dn, rt - dn) == 0.0f) { pair_sum += dn; pair_cnt += 1.0f; }
@@ -391,10 +403,11 @@ fragment float4 ps_chara_draw_ex(
     float4 smooth_c = (pair_cnt > 0.0f) ? (pair_sum / pair_cnt) : ((rt + dn + up + lf + c) * 0.2f);
     float4 interior = (pair_cnt >= 4.0f) ? c : smooth_c;
 
-    float nz_a = (abs(dn.a) > 0.0f ? 1.0f : 0.0f) + (abs(rt.a) > 0.0f ? 1.0f : 0.0f) +
-                 (abs(up.a) > 0.0f ? 1.0f : 0.0f) + (abs(lf.a) > 0.0f ? 1.0f : 0.0f);
-    if (nz_a > 1.0f) {
-        interior = float4(c.rgb, 1.0f / nz_a);
+    // Count TRANSPARENT neighbors (abs(a) == 0): softens isolated thin pixel spikes without fading solid interiors
+    float zero_cnt = (abs(dn.a) == 0.0f ? 1.0f : 0.0f) + (abs(rt.a) == 0.0f ? 1.0f : 0.0f) +
+                     (abs(up.a) == 0.0f ? 1.0f : 0.0f) + (abs(lf.a) == 0.0f ? 1.0f : 0.0f);
+    if (zero_cnt > 1.0f) {
+        interior = float4(c.rgb, 1.0f / zero_cnt);
     }
 
     float4 edge_acc = float4(0.0f);
