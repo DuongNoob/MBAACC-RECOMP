@@ -39,9 +39,9 @@ typedef struct MBAAVirtualPadState {
 - (void)touchOverlayViewDidRequestResetCheck:(TouchOverlayView*)overlay;
 @end
 
-/// Ergonomic multi-touch fighting-game overlay tuned for iPhone SE 2020 (1334x750, 16:9).
-/// A centered 4:3 game viewport (1000x750 px / 500x375 pt) leaves 167 px (83.5 pt) sidebars
-/// on both left and right edges for D-pad, attack buttons, macros, and utility controls.
+/// AetherSX2-inspired PS2 multi-touch fighting-game overlay tuned for iPhone SE 2020
+/// (1334x750 px / 667x375 pt landscape, safe-area aware) with crisp translucent white
+/// vector outlines, 8-way D-pad, PS2 face diamond, L1/L2/R1/R2 shoulders, and bottom-center controls.
 @interface TouchOverlayView : UIView
 
 @property (nonatomic, weak, nullable) id<TouchOverlayViewDelegate> delegate;
