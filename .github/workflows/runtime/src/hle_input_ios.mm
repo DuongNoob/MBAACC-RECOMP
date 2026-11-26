@@ -28,32 +28,19 @@ constexpr uint32_t kDIDFT_AXIS            = 0x00000003u;
 constexpr uint32_t kDIDFT_BUTTON          = 0x0000000Cu;
 constexpr uint32_t kDIDFT_POV             = 0x00000010u;
 
-// DirectInput keyboard scancodes (DIK_*)
-constexpr uint8_t kDIK_ESCAPE = 0x01u;
+// DirectInput keyboard scancodes (DIK_*) matching MBAA.exe P1 table at 0x0054d2c0:
+//   Up=W(0x11), Down=S(0x1F), Left=A(0x1E), Right=D(0x20),
+//   A=C(0x2E), B=V(0x2F), C=B(0x30), D=F(0x21), E=E(0x12), Start=Q(0x10)
+constexpr uint8_t kDIK_Q      = 0x10u;
+constexpr uint8_t kDIK_W      = 0x11u;
+constexpr uint8_t kDIK_E      = 0x12u;
 constexpr uint8_t kDIK_A      = 0x1Eu;
 constexpr uint8_t kDIK_S      = 0x1Fu;
-constexpr uint8_t kDIK_Z      = 0x2Cu;
-constexpr uint8_t kDIK_X      = 0x2Du;
+constexpr uint8_t kDIK_D      = 0x20u;
+constexpr uint8_t kDIK_F      = 0x21u;
 constexpr uint8_t kDIK_C      = 0x2Eu;
-constexpr uint8_t kDIK_RETURN = 0x1Cu;
-constexpr uint8_t kDIK_SPACE  = 0x39u;
-constexpr uint8_t kDIK_F1     = 0x3Bu;
-constexpr uint8_t kDIK_F2     = 0x3Cu;
-constexpr uint8_t kDIK_UP     = 0xC8u;
-constexpr uint8_t kDIK_LEFT   = 0xCBu;
-constexpr uint8_t kDIK_RIGHT  = 0xCDu;
-constexpr uint8_t kDIK_DOWN   = 0xD0u;
-
-// Win32 Virtual Key codes for GetKeyState / GetAsyncKeyState
-constexpr int kVK_RETURN = 0x0Du;
-constexpr int kVK_ESCAPE = 0x1Bu;
-constexpr int kVK_SPACE  = 0x20;
-constexpr int kVK_LEFT   = 0x25;
-constexpr int kVK_UP     = 0x26;
-constexpr int kVK_RIGHT  = 0x27;
-constexpr int kVK_DOWN   = 0x28;
-constexpr int kVK_F1     = 0x70;
-constexpr int kVK_F2     = 0x71;
+constexpr uint8_t kDIK_V      = 0x2Fu;
+constexpr uint8_t kDIK_B      = 0x30u;
 
 // GUID_SysKeyboard {6F1D2B61-D5A0-11CF-BFC7-444553540000}
 constexpr uint8_t kGuidSysKeyboard[16] = {
@@ -153,20 +140,33 @@ void poll_gc_controller(GCController* ctrl, CombinedPadSnapshot& out) {
         if (gp.dpad.left.isPressed || lx < -0.35f) out.buttons |= kTouchLeft;
         if (gp.dpad.right.isPressed || lx > 0.35f) out.buttons |= kTouchRight;
 
-        // Melty Blood standard 4/5-button arcade pad mapping:
-        // X (Square) = A, A (Cross) = B, B (Circle) = C, Y (Triangle) = D, R1 = E, L1 = Dash (A+B), L2 = FN1, R2 = FN2
+        // Authentic Melty Blood PS2 controller mapping + MBAACC E (R1):
+        //   Square (X)   = A (Punch / Light)
+        //   Cross (A)    = B (Low Kick / Medium)
+        //   Circle (B)   = C (High Kick / Heavy)
+        //   Triangle (Y) = D (Magic / Shield)
+        //   L1           = A + D (Throw / Evade)
+        //   L2           = A + B + C (Heat)
+        //   R1           = E (Quick Action)
+        //   R2           = A + B (Dash)
+        //   Start (Menu) = Start / Pause game
+        //   Select       = FN1
+        //   R3           = FN2
         if (gp.buttonX.isPressed) out.buttons |= kTouchA;
         if (gp.buttonA.isPressed) out.buttons |= kTouchB;
         if (gp.buttonB.isPressed) out.buttons |= kTouchC;
         if (gp.buttonY.isPressed) out.buttons |= kTouchD;
+        if (gp.leftShoulder.isPressed)  out.buttons |= (kTouchA | kTouchD);
+        if (gp.leftTrigger.isPressed)   out.buttons |= kTouchHeat;
         if (gp.rightShoulder.isPressed) out.buttons |= kTouchE;
-        if (gp.leftShoulder.isPressed)  out.buttons |= (kTouchA | kTouchB);
-        if (gp.leftTrigger.isPressed)   out.buttons |= kTouchFN1;
-        if (gp.rightTrigger.isPressed)  out.buttons |= kTouchFN2;
+        if (gp.rightTrigger.isPressed)  out.buttons |= kTouchDash;
         if (gp.buttonMenu.isPressed)    out.buttons |= kTouchStart;
         if (@available(iOS 13.0, macOS 10.15, *)) {
             if (gp.buttonOptions != nil && gp.buttonOptions.isPressed) {
-                out.buttons |= kTouchCoin;
+                out.buttons |= kTouchFN1;
+            }
+            if (gp.rightThumbstickButton != nil && gp.rightThumbstickButton.isPressed) {
+                out.buttons |= kTouchFN2;
             }
         }
     } else if (ctrl.microGamepad != nil) {
@@ -336,6 +336,69 @@ void dev_enum_objects(CpuContext& ctx, GuestMemory& mem) {
     ctx.ret_stdcall(mem, 16u);
 }
 
+// Ensures MBAA.exe's in-memory PadConfig (0x0074DA18, stride 0x164) stays bound to
+// iOS virtual/GCController pads with canonical button slots even when a PC System/_KeyConfig.ini
+// (e.g. P0_Num=0 or a different USB stick like Xin-Mo Controller) is present in Assets.
+void sync_ios_pad_config(GuestMemory& mem) {
+    constexpr uint32_t kPadConfigBaseVa  = 0x0074DA18u;
+    constexpr uint32_t kPadConfigStride  = 0x00000164u;
+    constexpr uint32_t kJoyVecBeginVa    = 0x0076E9B8u;
+    constexpr uint32_t kJoyVecEndVa      = 0x0076E9BCu;
+    constexpr uint32_t kJoyEntrySize     = 0x00000150u;
+
+    const uint32_t vec_begin = mem.r32(kJoyVecBeginVa);
+    const uint32_t vec_end   = mem.r32(kJoyVecEndVa);
+    if (vec_begin == 0u || vec_end <= vec_begin) {
+        return;
+    }
+
+    const uint32_t joy_count = (vec_end - vec_begin) / kJoyEntrySize;
+    if (joy_count < 1u) {
+        return;
+    }
+
+    auto ensure_slot = [&](uint32_t slot, uint32_t joy_num, const char* expected_name) {
+        const uint32_t base = kPadConfigBaseVa + slot * kPadConfigStride;
+        if (!mem.in_bounds(base, kPadConfigStride)) {
+            return;
+        }
+        const uint32_t cur_num = mem.r32(base);
+        char cur_name[20] = {};
+        mem.read_bytes(base + 4u, cur_name, sizeof(cur_name));
+        if (cur_num == joy_num && std::strncmp(cur_name, expected_name, sizeof(cur_name) - 1) == 0) {
+            return;
+        }
+
+        mem.zero_bytes(base, kPadConfigStride);
+        mem.w32(base, joy_num);
+        mem.write_cstring(base + 4u, expected_name, 256u);
+
+        // val_idx mapping matching MBAA.exe 0x0054d138 + sub_0049fad0/sub_0049fca0:
+        //   val=1..16 -> rgbButtons[val - 1], val=21..24 -> +/- X/Y axes
+        const uint32_t vals_va = base + 0x104u;
+        mem.w32(vals_va +  0u * 4u, 24u); // Up    (lY < 0)
+        mem.w32(vals_va +  1u * 4u, 23u); // Down  (lY > 0)
+        mem.w32(vals_va +  2u * 4u, 22u); // Left  (lX < 0)
+        mem.w32(vals_va +  3u * 4u, 21u); // Right (lX > 0)
+        mem.w32(vals_va +  4u * 4u,  6u); // Pause/Start (0x001) -> rgbButtons[5]
+        mem.w32(vals_va +  6u * 4u,  4u); // Shield D    (0x004) -> rgbButtons[3]
+        mem.w32(vals_va +  7u * 4u,  3u); // Strong C    (0x008) -> rgbButtons[2]
+        mem.w32(vals_va +  8u * 4u,  1u); // Weak A      (0x010) -> rgbButtons[0]
+        mem.w32(vals_va +  9u * 4u,  2u); // Medium B    (0x020) -> rgbButtons[1]
+        mem.w32(vals_va + 10u * 4u,  9u); // A+B macro   (0x040) -> rgbButtons[8]
+        mem.w32(vals_va + 11u * 4u,  5u); // Quick E     (0x080) -> rgbButtons[4]
+        mem.w32(vals_va + 12u * 4u,  7u); // FN1         (0x100) -> rgbButtons[6]
+        mem.w32(vals_va + 13u * 4u,  8u); // FN2         (0x200) -> rgbButtons[7]
+        mem.w32(vals_va + 14u * 4u,  1u); // Menu Confirm(0x400) -> rgbButtons[0]
+        mem.w32(vals_va + 15u * 4u,  2u); // Menu Cancel (0x800) -> rgbButtons[1]
+    };
+
+    ensure_slot(0u, 1u, "iOS Controller P1");
+    if (joy_count >= 2u && g_input.pads[1].connected) {
+        ensure_slot(1u, 2u, "iOS Controller P2");
+    }
+}
+
 // IDirectInputDevice8A::GetDeviceState(this, cbData, lpvData) -> 12 bytes
 void dev_get_device_state(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t this_va = ctx.arg32(mem, 0);
@@ -357,23 +420,21 @@ void dev_get_device_state(CpuContext& ctx, GuestMemory& mem) {
     const CombinedPadSnapshot& p  = g_input.pads[pad_idx];
 
     if (kind == DiDeviceKind::Keyboard && cb_data >= 256u) {
-        // Bridge Touch + P1 GCController to standard P1 DIK scancodes
+        // Bridge Touch + P1 GCController to exact MBAA.exe P1 DIK scancodes (0x0054d2c0)
         const uint32_t b = p1.buttons;
-        if (b & kTouchUp)     mem.w8(lpv_va + kDIK_UP, 0x80u);
-        if (b & kTouchDown)   mem.w8(lpv_va + kDIK_DOWN, 0x80u);
-        if (b & kTouchLeft)   mem.w8(lpv_va + kDIK_LEFT, 0x80u);
-        if (b & kTouchRight)  mem.w8(lpv_va + kDIK_RIGHT, 0x80u);
-        if (b & kTouchA)      mem.w8(lpv_va + kDIK_Z, 0x80u);
-        if (b & kTouchB)      mem.w8(lpv_va + kDIK_X, 0x80u);
-        if (b & kTouchC)      mem.w8(lpv_va + kDIK_C, 0x80u);
-        if (b & kTouchD)      mem.w8(lpv_va + kDIK_A, 0x80u);
-        if (b & kTouchE)      mem.w8(lpv_va + kDIK_S, 0x80u);
-        if (b & kTouchStart)  mem.w8(lpv_va + kDIK_RETURN, 0x80u);
-        if (b & kTouchCoin)   mem.w8(lpv_va + kDIK_SPACE, 0x80u);
-        if (b & kTouchFN1)    mem.w8(lpv_va + kDIK_F1, 0x80u);
-        if (b & kTouchFN2)    mem.w8(lpv_va + kDIK_F2, 0x80u);
-        if (b & kTouchPause)  mem.w8(lpv_va + kDIK_ESCAPE, 0x80u);
+        if (b & kTouchUp)     mem.w8(lpv_va + kDIK_W, 0x80u);
+        if (b & kTouchDown)   mem.w8(lpv_va + kDIK_S, 0x80u);
+        if (b & kTouchLeft)   mem.w8(lpv_va + kDIK_A, 0x80u);
+        if (b & kTouchRight)  mem.w8(lpv_va + kDIK_D, 0x80u);
+        if (b & kTouchA)      mem.w8(lpv_va + kDIK_C, 0x80u);
+        if (b & kTouchB)      mem.w8(lpv_va + kDIK_V, 0x80u);
+        if (b & kTouchC)      mem.w8(lpv_va + kDIK_B, 0x80u);
+        if (b & kTouchD)      mem.w8(lpv_va + kDIK_F, 0x80u);
+        if (b & kTouchE)      mem.w8(lpv_va + kDIK_E, 0x80u);
+        if (b & kTouchStart)  mem.w8(lpv_va + kDIK_Q, 0x80u);
     } else if (kind == DiDeviceKind::Gamepad && cb_data >= 272u) {
+        sync_ios_pad_config(mem);
+
         // DIJOYSTATE2 (0x110 = 272 bytes):
         //   +0x00 lX, +0x04 lY (scaled by 0.1275 in MBAA.exe 0x00410725 -> use -1000..+1000)
         //   +0x20 rgdwPOV[4]
@@ -393,16 +454,15 @@ void dev_get_device_state(CpuContext& ctx, GuestMemory& mem) {
         mem.w32(lpv_va + 0x28u, 0xFFFFFFFFu);
         mem.w32(lpv_va + 0x2Cu, 0xFFFFFFFFu);
 
-        if (b & kTouchA)     mem.w8(lpv_va + 0x30u + 0u, 0x80u);
-        if (b & kTouchB)     mem.w8(lpv_va + 0x30u + 1u, 0x80u);
-        if (b & kTouchC)     mem.w8(lpv_va + 0x30u + 2u, 0x80u);
-        if (b & kTouchD)     mem.w8(lpv_va + 0x30u + 3u, 0x80u);
-        if (b & kTouchE)     mem.w8(lpv_va + 0x30u + 4u, 0x80u);
-        if (b & kTouchFN1)   mem.w8(lpv_va + 0x30u + 5u, 0x80u);
-        if (b & kTouchFN2)   mem.w8(lpv_va + 0x30u + 6u, 0x80u);
-        if (b & kTouchStart) mem.w8(lpv_va + 0x30u + 7u, 0x80u);
-        if (b & kTouchCoin)  mem.w8(lpv_va + 0x30u + 8u, 0x80u);
-        if (b & kTouchPause) mem.w8(lpv_va + 0x30u + 9u, 0x80u);
+        if (b & kTouchA)     mem.w8(lpv_va + 0x30u + 0u, 0x80u); // Button 1: A
+        if (b & kTouchB)     mem.w8(lpv_va + 0x30u + 1u, 0x80u); // Button 2: B
+        if (b & kTouchC)     mem.w8(lpv_va + 0x30u + 2u, 0x80u); // Button 3: C
+        if (b & kTouchD)     mem.w8(lpv_va + 0x30u + 3u, 0x80u); // Button 4: D
+        if (b & kTouchE)     mem.w8(lpv_va + 0x30u + 4u, 0x80u); // Button 5: E
+        if (b & kTouchStart) mem.w8(lpv_va + 0x30u + 5u, 0x80u); // Button 6: Pause/Start
+        if (b & kTouchFN1)   mem.w8(lpv_va + 0x30u + 6u, 0x80u); // Button 7: FN1
+        if (b & kTouchFN2)   mem.w8(lpv_va + 0x30u + 7u, 0x80u); // Button 8: FN2
+        if (b & kTouchDash)  mem.w8(lpv_va + 0x30u + 8u, 0x80u); // Button 9: A+B Dash
     }
 
     ctx.eax = kDI_OK;
@@ -551,10 +611,11 @@ void input_poll_platform() {
     if (count >= 2) poll_gc_controller(ctrls[1], p2);
 #endif
 
-    // Merge virtual TouchOverlayView into P1
+    // Merge virtual TouchOverlayView into P1 (TouchOverlayView uses +1=up, DirectInput uses -1=up)
     p1.buttons = expand_macros(p1.buttons | touch_copy.buttons);
+    const float touch_di_y = -touch_copy.stick_y;
     if (std::abs(touch_copy.stick_x) > std::abs(p1.axis_x)) p1.axis_x = touch_copy.stick_x;
-    if (std::abs(touch_copy.stick_y) > std::abs(p1.axis_y)) p1.axis_y = touch_copy.stick_y;
+    if (std::abs(touch_di_y) > std::abs(p1.axis_y)) p1.axis_y = touch_di_y;
     p1.connected = true;
 
     p2.buttons = expand_macros(p2.buttons);
@@ -571,20 +632,16 @@ int16_t input_get_vk_state(int vk_code) {
     const uint32_t b = g_input.pads[0].buttons;
     bool down = false;
     switch (vk_code) {
-        case kVK_UP:     down = (b & kTouchUp) != 0; break;
-        case kVK_DOWN:   down = (b & kTouchDown) != 0; break;
-        case kVK_LEFT:   down = (b & kTouchLeft) != 0; break;
-        case kVK_RIGHT:  down = (b & kTouchRight) != 0; break;
-        case 'Z':        down = (b & kTouchA) != 0; break;
-        case 'X':        down = (b & kTouchB) != 0; break;
-        case 'C':        down = (b & kTouchC) != 0; break;
-        case 'A':        down = (b & kTouchD) != 0; break;
-        case 'S':        down = (b & kTouchE) != 0; break;
-        case kVK_RETURN: down = (b & kTouchStart) != 0; break;
-        case kVK_SPACE:  down = (b & kTouchCoin) != 0; break;
-        case kVK_F1:     down = (b & kTouchFN1) != 0; break;
-        case kVK_F2:     down = (b & kTouchFN2) != 0; break;
-        case kVK_ESCAPE: down = (b & kTouchPause) != 0; break;
+        case 'W': down = (b & kTouchUp) != 0; break;
+        case 'S': down = (b & kTouchDown) != 0; break;
+        case 'A': down = (b & kTouchLeft) != 0; break;
+        case 'D': down = (b & kTouchRight) != 0; break;
+        case 'C': down = (b & kTouchA) != 0; break;
+        case 'V': down = (b & kTouchB) != 0; break;
+        case 'B': down = (b & kTouchC) != 0; break;
+        case 'F': down = (b & kTouchD) != 0; break;
+        case 'E': down = (b & kTouchE) != 0; break;
+        case 'Q': down = (b & kTouchStart) != 0; break;
         default: break;
     }
     return down ? static_cast<int16_t>(-32767) : 0;
