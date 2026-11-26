@@ -55,6 +55,7 @@ constexpr uint32_t kS_OK         = 0x00000000u;
 constexpr uint32_t kE_FAIL       = 0x80004005u;
 constexpr uint32_t kE_INVALIDARG = 0x80070057u;
 constexpr uint32_t kE_NOTIMPL    = 0x80004001u;
+constexpr uint32_t kD3DERR_NOTFOUND    = 0x88760866u;
 constexpr uint32_t kD3DERR_INVALIDCALL = 0x8876086Cu;
 
 constexpr uint32_t kKindD3D9    = 0x39443344u; // 'D3D9'
@@ -1100,6 +1101,16 @@ struct D3D9MetalBridge::Impl {
     // -----------------------------------------------------------------------
     id<MTLTexture> make_mtl_texture(uint32_t w, uint32_t h, MTLPixelFormat fmt, bool is_rt, bool is_ds) {
         if (!device || w == 0u || h == 0u) return nil;
+        w = std::clamp<uint32_t>(w, 1u, 16384u);
+        h = std::clamp<uint32_t>(h, 1u, 16384u);
+        if (is_ds &&
+            fmt != MTLPixelFormatDepth16Unorm &&
+            fmt != MTLPixelFormatDepth32Float &&
+            fmt != MTLPixelFormatDepth32Float_Stencil8) {
+            fmt = MTLPixelFormatDepth32Float_Stencil8;
+        } else if (is_rt && fmt == MTLPixelFormatA8Unorm) {
+            fmt = MTLPixelFormatR8Unorm;
+        }
         id<MTLTexture> tex = nil;
         @autoreleasepool {
             MTLTextureDescriptor* desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:fmt
@@ -1928,108 +1939,125 @@ void com_unknown_query_interface(CpuContext& ctx, GuestMemory& mem) {
     ctx.ret_stdcall(mem, 12u);
 }
 
+uint32_t addref_com_object(GuestMemory& mem, uint32_t self_va) {
+    if (self_va != 0u && mem.in_bounds(self_va + 12u, 4u)) {
+        const uint32_t rc = mem.r32(self_va + 8u) + 1u;
+        mem.w32(self_va + 8u, rc);
+        return rc;
+    }
+    return 0u;
+}
+
+uint32_t release_com_object_locked(D3D9MetalBridge::Impl* im, GuestMemory& mem, uint32_t self_va) {
+    uint32_t rc = 0u;
+    if (self_va != 0u && mem.in_bounds(self_va + 12u, 4u)) {
+        rc = mem.r32(self_va + 8u);
+        if (rc > 0u) --rc;
+        mem.w32(self_va + 8u, rc);
+        if (rc == 0u && im != nullptr) {
+            const uint32_t hid  = mem.r32(self_va + 4u);
+            const uint32_t kind = mem.r32(self_va + 12u);
+            bool can_free_self = false;
+            @autoreleasepool {
+                if (kind == kKindTexture) {
+                    for (uint32_t& bva : im->bound_textures) {
+                        if (bva == self_va) bva = 0u;
+                    }
+                    if (auto it = im->textures.find(hid); it != im->textures.end()) {
+                        auto& tr = it->second;
+                        if (tr.mtl_tex != nil && !tr.evicted && !tr.is_render_target && !tr.is_depth_stencil) {
+                            if (im->cached_texture_bytes >= tr.gpu_bytes) {
+                                im->cached_texture_bytes -= tr.gpu_bytes;
+                            } else {
+                                im->cached_texture_bytes = 0u;
+                            }
+                        }
+                        // If a live child RT/DS surface outlives its parent texture, transfer ownership cleanly
+                        if (tr.surface_guest_va != 0u && (tr.is_render_target || tr.is_depth_stencil) && tr.mtl_tex != nil) {
+                            if (SurfaceRecord* sr = im->find_surface_by_va(mem, tr.surface_guest_va)) {
+                                sr->mtl_tex = tr.mtl_tex;
+                                sr->parent_tex_id = 0u;
+                            }
+                        }
+                        tr.mtl_tex = nil;
+                        if (tr.staging_va) mem.guest_free(tr.staging_va);
+                        im->textures.erase(it);
+                    }
+                    can_free_self = true;
+                } else if (kind == kKindSurface && hid > 2u) {
+                    for (uint32_t& rva : im->bound_rt_surfaces) {
+                        if (rva == self_va) {
+                            im->end_active_encoder();
+                            rva = 0u;
+                            im->encoder_rt_dirty = true;
+                        }
+                    }
+                    if (im->bound_ds_surface == self_va) {
+                        im->end_active_encoder();
+                        im->bound_ds_surface = 0u;
+                        im->encoder_rt_dirty = true;
+                    }
+                    if (auto it = im->surfaces.find(hid); it != im->surfaces.end()) {
+                        auto& sr = it->second;
+                        if (sr.parent_tex_id != 0u) {
+                            if (auto tit = im->textures.find(sr.parent_tex_id); tit != im->textures.end()) {
+                                if (tit->second.surface_guest_va == self_va) {
+                                    tit->second.surface_guest_va = 0u;
+                                }
+                            }
+                        }
+                        sr.mtl_tex = nil;
+                        if (sr.staging_va) mem.guest_free(sr.staging_va);
+                        im->surfaces.erase(it);
+                    }
+                    can_free_self = true;
+                } else if (kind == kKindEffect) {
+                    if (im->active_effect_id == hid || im->active_effect_id == self_va) {
+                        im->active_effect_id = 0u;
+                    }
+                    im->effects.erase(hid);
+                    can_free_self = true;
+                } else if (kind == kKindFont) {
+                    if (auto it = im->fonts.find(hid); it != im->fonts.end()) {
+                        if (it->second.ct_font) CFRelease(it->second.ct_font);
+                        im->fonts.erase(it);
+                    }
+                    can_free_self = true;
+                } else if (kind == kKindVBuf || kind == kKindIBuf) {
+                    if (kind == kKindIBuf && im->current_ib_va == self_va) {
+                        im->current_ib_id = 0u;
+                        im->current_ib_va = 0u;
+                    }
+                    if (auto it = im->buffers.find(hid); it != im->buffers.end()) {
+                        if (it->second.data_va) mem.guest_free(it->second.data_va);
+                        im->buffers.erase(it);
+                    }
+                    can_free_self = true;
+                }
+            }
+            if (can_free_self && self_va >= GuestMemory::kHeapBase) {
+                mem.guest_free(self_va);
+            }
+        }
+    }
+    return rc;
+}
+
 void com_unknown_addref(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t self_va = ctx.arg32(mem, 0);
-    uint32_t rc = 1u;
-    if (self_va != 0u && mem.in_bounds(self_va + 8u, 4u)) {
-        rc = mem.r32(self_va + 8u) + 1u;
-        mem.w32(self_va + 8u, rc);
-    }
-    ctx.eax = rc;
+    const uint32_t rc = addref_com_object(mem, self_va);
+    ctx.eax = (rc > 0u) ? rc : 1u;
     ctx.ret_stdcall(mem, 4u);
 }
 
 void com_unknown_release(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t self_va = ctx.arg32(mem, 0);
     uint32_t rc = 0u;
-    if (self_va != 0u && mem.in_bounds(self_va + 12u, 4u)) {
-        rc = mem.r32(self_va + 8u);
-        if (rc > 0u) --rc;
-        mem.w32(self_va + 8u, rc);
-        if (rc == 0u) {
-            if (auto* im = active_impl()) {
-                std::lock_guard<std::recursive_mutex> lk(im->mtx);
-                const uint32_t hid  = mem.r32(self_va + 4u);
-                const uint32_t kind = mem.r32(self_va + 12u);
-                bool can_free_self = false;
-                @autoreleasepool {
-                    if (kind == kKindTexture) {
-                        for (uint32_t& bva : im->bound_textures) {
-                            if (bva == self_va) bva = 0u;
-                        }
-                        if (auto it = im->textures.find(hid); it != im->textures.end()) {
-                            auto& tr = it->second;
-                            if (tr.mtl_tex != nil && !tr.evicted && !tr.is_render_target && !tr.is_depth_stencil) {
-                                if (im->cached_texture_bytes >= tr.gpu_bytes) {
-                                    im->cached_texture_bytes -= tr.gpu_bytes;
-                                } else {
-                                    im->cached_texture_bytes = 0u;
-                                }
-                            }
-                            // If a live child RT/DS surface outlives its parent texture, transfer ownership cleanly
-                            if (tr.surface_guest_va != 0u && (tr.is_render_target || tr.is_depth_stencil) && tr.mtl_tex != nil) {
-                                if (SurfaceRecord* sr = im->find_surface_by_va(mem, tr.surface_guest_va)) {
-                                    sr->mtl_tex = tr.mtl_tex;
-                                    sr->parent_tex_id = 0u;
-                                }
-                            }
-                            tr.mtl_tex = nil;
-                            if (tr.staging_va) mem.guest_free(tr.staging_va);
-                            im->textures.erase(it);
-                        }
-                        can_free_self = true;
-                    } else if (kind == kKindSurface && hid > 2u) {
-                        for (uint32_t& rva : im->bound_rt_surfaces) {
-                            if (rva == self_va) {
-                                im->end_active_encoder();
-                                rva = 0u;
-                                im->encoder_rt_dirty = true;
-                            }
-                        }
-                        if (im->bound_ds_surface == self_va) {
-                            im->end_active_encoder();
-                            im->bound_ds_surface = 0u;
-                            im->encoder_rt_dirty = true;
-                        }
-                        if (auto it = im->surfaces.find(hid); it != im->surfaces.end()) {
-                            auto& sr = it->second;
-                            if (sr.parent_tex_id != 0u) {
-                                if (auto tit = im->textures.find(sr.parent_tex_id); tit != im->textures.end()) {
-                                    if (tit->second.surface_guest_va == self_va) {
-                                        tit->second.surface_guest_va = 0u;
-                                    }
-                                }
-                            }
-                            sr.mtl_tex = nil;
-                            if (sr.staging_va) mem.guest_free(sr.staging_va);
-                            im->surfaces.erase(it);
-                        }
-                        can_free_self = true;
-                    } else if (kind == kKindEffect) {
-                        if (im->active_effect_id == hid || im->active_effect_id == self_va) {
-                            im->active_effect_id = 0u;
-                        }
-                        im->effects.erase(hid);
-                        can_free_self = true;
-                    } else if (kind == kKindFont) {
-                        if (auto it = im->fonts.find(hid); it != im->fonts.end()) {
-                            if (it->second.ct_font) CFRelease(it->second.ct_font);
-                            im->fonts.erase(it);
-                        }
-                        can_free_self = true;
-                    } else if (kind == kKindVBuf || kind == kKindIBuf) {
-                        if (auto it = im->buffers.find(hid); it != im->buffers.end()) {
-                            if (it->second.data_va) mem.guest_free(it->second.data_va);
-                            im->buffers.erase(it);
-                        }
-                        can_free_self = true;
-                    }
-                }
-                if (can_free_self && self_va >= GuestMemory::kHeapBase) {
-                    mem.guest_free(self_va);
-                }
-            }
-        }
+    if (auto* im = active_impl()) {
+        std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        rc = release_com_object_locked(im, mem, self_va);
+    } else {
+        rc = release_com_object_locked(nullptr, mem, self_va);
     }
     ctx.eax = rc;
     ctx.ret_stdcall(mem, 4u);
@@ -2318,8 +2346,10 @@ uint32_t create_texture_internal(
     uint32_t format,
     uint32_t pool)
 {
-    if (w == 0u) w = 1u;
-    if (h == 0u) h = 1u;
+    if (w == 0u || w >= 0xFFFFFFFEu) w = 1u;
+    if (h == 0u || h >= 0xFFFFFFFEu) h = 1u;
+    w = std::clamp<uint32_t>(w, 1u, 16384u);
+    h = std::clamp<uint32_t>(h, 1u, 16384u);
     const bool is_rt = (usage & kUsageRenderTarget) != 0u;
     const bool is_ds = (usage & kUsageDepthStencil) != 0u;
     const uint32_t eff_fmt = format ? format : kFmtA8R8G8B8;
@@ -2667,10 +2697,13 @@ void com_dev_set_render_target(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t surf_va = ctx.arg32(mem, 2);
     if (auto* im = active_impl(); im && idx < im->bound_rt_surfaces.size()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
-        if (im->bound_rt_surfaces[idx] != surf_va) {
+        const uint32_t old_va = im->bound_rt_surfaces[idx];
+        if (old_va != surf_va) {
             im->end_active_encoder();
+            if (surf_va != 0u) addref_com_object(mem, surf_va);
             im->bound_rt_surfaces[idx] = surf_va;
             im->encoder_rt_dirty = true;
+            if (old_va != 0u) release_com_object_locked(im, mem, old_va);
         }
         // DX9 spec: SetRenderTarget(0, ...) always resets the viewport to the full RT dimensions
         if (idx == 0u) {
@@ -2682,8 +2715,10 @@ void com_dev_set_render_target(CpuContext& ctx, GuestMemory& mem) {
                 }
             }
         }
+        ctx.eax = kS_OK;
+    } else {
+        ctx.eax = kD3DERR_INVALIDCALL;
     }
-    ctx.eax = kS_OK;
     ctx.ret_stdcall(mem, 12u);
 }
 
@@ -2694,9 +2729,15 @@ void com_dev_get_render_target(CpuContext& ctx, GuestMemory& mem) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
         const uint32_t sva = im->bound_rt_surfaces[idx];
         mem.w32(pp_surf, sva);
-        if (sva != 0u) mem.w32(sva + 8u, mem.r32(sva + 8u) + 1u);
+        if (sva != 0u) {
+            addref_com_object(mem, sva);
+            ctx.eax = kS_OK;
+        } else {
+            ctx.eax = kD3DERR_NOTFOUND;
+        }
+    } else {
+        ctx.eax = kD3DERR_INVALIDCALL;
     }
-    ctx.eax = kS_OK;
     ctx.ret_stdcall(mem, 12u);
 }
 
@@ -2704,10 +2745,13 @@ void com_dev_set_depth_stencil(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t surf_va = ctx.arg32(mem, 1);
     if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
-        if (im->bound_ds_surface != surf_va) {
+        const uint32_t old_va = im->bound_ds_surface;
+        if (old_va != surf_va) {
             im->end_active_encoder();
+            if (surf_va != 0u) addref_com_object(mem, surf_va);
             im->bound_ds_surface = surf_va;
             im->encoder_rt_dirty = true;
+            if (old_va != 0u) release_com_object_locked(im, mem, old_va);
         }
     }
     ctx.eax = kS_OK;
@@ -2718,12 +2762,17 @@ void com_dev_get_depth_stencil(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t pp_surf = ctx.arg32(mem, 1);
     if (auto* im = active_impl(); im && pp_surf && mem.in_bounds(pp_surf, 4u)) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
-        mem.w32(pp_surf, im->bound_ds_surface);
-        if (im->bound_ds_surface != 0u) {
-            mem.w32(im->bound_ds_surface + 8u, mem.r32(im->bound_ds_surface + 8u) + 1u);
+        const uint32_t dsva = im->bound_ds_surface;
+        mem.w32(pp_surf, dsva);
+        if (dsva != 0u) {
+            addref_com_object(mem, dsva);
+            ctx.eax = kS_OK;
+        } else {
+            ctx.eax = kD3DERR_NOTFOUND;
         }
+    } else {
+        ctx.eax = kD3DERR_INVALIDCALL;
     }
-    ctx.eax = kS_OK;
     ctx.ret_stdcall(mem, 8u);
 }
 
@@ -2873,9 +2922,13 @@ void com_dev_get_texture(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t ppTex = ctx.arg32(mem, 2);
     if (auto* im = active_impl(); im && stage < im->bound_textures.size() && ppTex && mem.in_bounds(ppTex, 4u)) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
-        mem.w32(ppTex, im->bound_textures[stage]);
+        const uint32_t tva = im->bound_textures[stage];
+        mem.w32(ppTex, tva);
+        if (tva != 0u) addref_com_object(mem, tva);
+        ctx.eax = kS_OK;
+    } else {
+        ctx.eax = kD3DERR_INVALIDCALL;
     }
-    ctx.eax = kS_OK;
     ctx.ret_stdcall(mem, 12u);
 }
 
@@ -2884,7 +2937,12 @@ void com_dev_set_texture(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t tex_va = ctx.arg32(mem, 2);
     if (auto* im = active_impl(); im && stage < im->bound_textures.size()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
-        im->bound_textures[stage] = tex_va;
+        const uint32_t old_va = im->bound_textures[stage];
+        if (old_va != tex_va) {
+            if (tex_va != 0u) addref_com_object(mem, tex_va);
+            im->bound_textures[stage] = tex_va;
+            if (old_va != 0u) release_com_object_locked(im, mem, old_va);
+        }
     }
     ctx.eax = kS_OK;
     ctx.ret_stdcall(mem, 12u);
@@ -3110,12 +3168,15 @@ void com_dev_set_indices(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t ib_va = ctx.arg32(mem, 1);
     if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
-        if (BufferRecord* br = im->find_buffer_by_va(mem, ib_va)) {
-            im->current_ib_id = br->id;
-            im->current_ib_va = ib_va;
-        } else {
-            im->current_ib_id = 0u;
-            im->current_ib_va = 0u;
+        const uint32_t old_va = im->current_ib_va;
+        BufferRecord* br = im->find_buffer_by_va(mem, ib_va);
+        const uint32_t new_va = (br != nullptr) ? ib_va : 0u;
+        const uint32_t new_id = (br != nullptr) ? br->id : 0u;
+        if (old_va != new_va) {
+            if (new_va != 0u) addref_com_object(mem, new_va);
+            im->current_ib_id = new_id;
+            im->current_ib_va = new_va;
+            if (old_va != 0u) release_com_object_locked(im, mem, old_va);
         }
     }
     ctx.eax = kS_OK;
