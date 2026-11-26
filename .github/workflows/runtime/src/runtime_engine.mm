@@ -1,6 +1,9 @@
 #import <Foundation/Foundation.h>
 #import <QuartzCore/CAMetalLayer.h>
 
+extern "C" void* objc_autoreleasePoolPush(void);
+extern "C" void  objc_autoreleasePoolPop(void* pool);
+
 #include "mbaa_recomp/runtime_engine.h"
 #include "mbaa_recomp/d3d9_shim.h"
 #include "mbaa_recomp/dispatch.h"
@@ -107,6 +110,8 @@ struct RuntimeEngine::Impl {
     bool stop_requested = false;
     bool frame_in_flight = false;
     bool guest_boot_ok = false;
+    bool guest_detached = false;
+    void* guest_frame_pool = nullptr;
 
     D3D9MetalBridge d3d_bridge;
     bool d3d_initialized = false;
@@ -116,6 +121,11 @@ RuntimeEngine::RuntimeEngine() : impl_(std::make_unique<Impl>()) {}
 
 RuntimeEngine::~RuntimeEngine() {
     shutdown();
+    if (impl_ && impl_->guest_detached) {
+        // Emergency OS-termination fallback: keep Impl alive until process exit so a
+        // detached guest thread cannot dereference destroyed state during teardown.
+        (void)impl_.release();
+    }
 }
 
 bool RuntimeEngine::init(const std::string& assets_dir, void* metal_layer, int width, int height) {
@@ -150,6 +160,8 @@ bool RuntimeEngine::init(const std::string& assets_dir, void* metal_layer, int w
         impl_->mem.shutdown();
         return false;
     }
+
+    apply_cccaster_stage_unlocks(impl_->mem);
 
     clear_dispatch_table();
     register_recomp_functions();
@@ -204,22 +216,37 @@ bool RuntimeEngine::init(const std::string& assets_dir, void* metal_layer, int w
                 impl_ptr->mem.r32(0x005542d0u));
         }
 
-        std::unique_lock<std::mutex> lock(impl_ptr->sync_mtx);
-        impl_ptr->guest_boot_ok = true;
-        impl_ptr->phase = Impl::StepPhase::GuestYielded;
-        impl_ptr->host_cv.notify_all();
+        // Keep CCCaster extra stages and Stage 55 BGM table patched across runtime bgm.txt loads.
+        apply_cccaster_stage_unlocks(impl_ptr->mem);
 
-        impl_ptr->guest_cv.wait(lock, [impl_ptr]() {
-            return impl_ptr->stop_requested ||
-                   impl_ptr->phase == Impl::StepPhase::StepRequested;
-        });
-
-        if (impl_ptr->stop_requested || hle_win32_is_quit_requested()) {
-            return false;
+        // Drain all Obj-C / Metal autoreleased temporaries from the guest frame that just ended.
+        if (impl_ptr->guest_frame_pool != nullptr) {
+            objc_autoreleasePoolPop(impl_ptr->guest_frame_pool);
+            impl_ptr->guest_frame_pool = nullptr;
         }
 
-        impl_ptr->phase = Impl::StepPhase::WaitGuestYield;
-        return true;
+        bool keep_running = true;
+        {
+            std::unique_lock<std::mutex> lock(impl_ptr->sync_mtx);
+            impl_ptr->guest_boot_ok = true;
+            impl_ptr->phase = Impl::StepPhase::GuestYielded;
+            impl_ptr->host_cv.notify_all();
+
+            impl_ptr->guest_cv.wait(lock, [impl_ptr]() {
+                return impl_ptr->stop_requested ||
+                       impl_ptr->phase == Impl::StepPhase::StepRequested;
+            });
+
+            if (impl_ptr->stop_requested || hle_win32_is_quit_requested()) {
+                keep_running = false;
+            } else {
+                impl_ptr->phase = Impl::StepPhase::WaitGuestYield;
+            }
+        }
+
+        // Push a fresh per-frame autorelease pool before returning to guest code (including quit teardown).
+        impl_ptr->guest_frame_pool = objc_autoreleasePoolPush();
+        return keep_running;
     });
 
     {
@@ -227,6 +254,8 @@ bool RuntimeEngine::init(const std::string& assets_dir, void* metal_layer, int w
         impl_->phase = Impl::StepPhase::WaitGuestYield;
         impl_->stop_requested = false;
         impl_->frame_in_flight = false;
+        impl_->guest_detached = false;
+        impl_->guest_frame_pool = nullptr;
     }
 
     impl_->initialized.store(true, std::memory_order_release);
@@ -234,6 +263,17 @@ bool RuntimeEngine::init(const std::string& assets_dir, void* metal_layer, int w
 
     impl_->guest_thread = std::thread([impl_ptr, win_main_fn]() {
         @autoreleasepool {
+            impl_ptr->guest_frame_pool = objc_autoreleasePoolPush();
+            struct GuestFramePoolGuard {
+                void*& pool;
+                ~GuestFramePoolGuard() {
+                    if (pool != nullptr) {
+                        objc_autoreleasePoolPop(pool);
+                        pool = nullptr;
+                    }
+                }
+            } frame_pool_guard{impl_ptr->guest_frame_pool};
+
             hle_win32_set_guest_main_thread();
 
             const uint32_t crt_cnt = run_static_crt_initializers(impl_ptr->ctx, impl_ptr->mem);
@@ -286,71 +326,73 @@ void RuntimeEngine::step_frame() {
         return;
     }
 
-    input_poll_platform();
-    audio_update_streams();
+    @autoreleasepool {
+        input_poll_platform();
+        audio_update_streams();
 
-    Impl* impl_ptr = impl_.get();
-    auto guest_done = [impl_ptr]() {
-        return impl_ptr->phase == Impl::StepPhase::GuestYielded ||
-               impl_ptr->phase == Impl::StepPhase::GuestExited;
-    };
-    auto finish_frame = [this]() {
-        if (impl_->d3d_initialized) {
-            impl_->d3d_bridge.end_frame_and_present();
-        }
-        const uint64_t fno = impl_->frame_count.fetch_add(1u, std::memory_order_relaxed) + 1u;
-        if (fno == 1u || fno == 60u || fno == 300u) {
-            hle_win32_log("Frame %llu | active=%u | %s",
-                          static_cast<unsigned long long>(fno),
-                          static_cast<unsigned>(impl_->mem.r8(0x0076e650u)),
-                          impl_->d3d_bridge.debug_stats().c_str());
-        }
-    };
+        Impl* impl_ptr = impl_.get();
+        auto guest_done = [impl_ptr]() {
+            return impl_ptr->phase == Impl::StepPhase::GuestYielded ||
+                   impl_ptr->phase == Impl::StepPhase::GuestExited;
+        };
+        auto finish_frame = [this]() {
+            if (impl_->d3d_initialized) {
+                impl_->d3d_bridge.end_frame_and_present();
+            }
+            const uint64_t fno = impl_->frame_count.fetch_add(1u, std::memory_order_relaxed) + 1u;
+            if (fno == 1u || fno == 60u || fno == 300u) {
+                hle_win32_log("Frame %llu | active=%u | %s",
+                              static_cast<unsigned long long>(fno),
+                              static_cast<unsigned>(impl_->mem.r8(0x0076e650u)),
+                              impl_->d3d_bridge.debug_stats().c_str());
+            }
+        };
 
-    {
-        std::unique_lock<std::mutex> lock(impl_->sync_mtx);
-        if (impl_->frame_in_flight) {
+        {
+            std::unique_lock<std::mutex> lock(impl_->sync_mtx);
+            if (impl_->frame_in_flight) {
+                if (!impl_->host_cv.wait_for(lock, std::chrono::milliseconds(16), guest_done)) {
+                    return;
+                }
+                impl_->frame_in_flight = false;
+                if (impl_->phase == Impl::StepPhase::GuestExited) {
+                    impl_->running.store(false, std::memory_order_release);
+                }
+                lock.unlock();
+                finish_frame();
+                return;
+            }
+
             if (!impl_->host_cv.wait_for(lock, std::chrono::milliseconds(16), guest_done)) {
+                return;
+            }
+            if (impl_->phase == Impl::StepPhase::GuestExited) {
+                impl_->running.store(false, std::memory_order_release);
+                return;
+            }
+        }
+
+        if (impl_->d3d_initialized) {
+            impl_->d3d_bridge.begin_frame();
+        }
+
+        {
+            std::unique_lock<std::mutex> lock(impl_->sync_mtx);
+            impl_->frame_in_flight = true;
+            impl_->phase = Impl::StepPhase::StepRequested;
+            impl_->guest_cv.notify_one();
+
+            if (!impl_->host_cv.wait_for(lock, std::chrono::milliseconds(100), guest_done)) {
                 return;
             }
             impl_->frame_in_flight = false;
             if (impl_->phase == Impl::StepPhase::GuestExited) {
                 impl_->running.store(false, std::memory_order_release);
             }
-            lock.unlock();
-            finish_frame();
-            return;
         }
 
-        if (!impl_->host_cv.wait_for(lock, std::chrono::milliseconds(16), guest_done)) {
-            return;
-        }
-        if (impl_->phase == Impl::StepPhase::GuestExited) {
-            impl_->running.store(false, std::memory_order_release);
-            return;
-        }
+        finish_frame();
     }
-
-    if (impl_->d3d_initialized) {
-        impl_->d3d_bridge.begin_frame();
-    }
-
-    {
-        std::unique_lock<std::mutex> lock(impl_->sync_mtx);
-        impl_->frame_in_flight = true;
-        impl_->phase = Impl::StepPhase::StepRequested;
-        impl_->guest_cv.notify_one();
-
-        if (!impl_->host_cv.wait_for(lock, std::chrono::milliseconds(100), guest_done)) {
-            return;
-        }
-        impl_->frame_in_flight = false;
-        if (impl_->phase == Impl::StepPhase::GuestExited) {
-            impl_->running.store(false, std::memory_order_release);
-        }
-    }
-
-    finish_frame();
 }
 
 void RuntimeEngine::set_touch_state(const TouchInputState& state) {
@@ -377,14 +419,35 @@ void RuntimeEngine::shutdown() {
             impl_->stop_requested = true;
             impl_->guest_cv.notify_all();
         }
+
+        bool joined_cleanly = true;
         if (impl_->guest_thread.joinable()) {
-            impl_->guest_thread.join();
+            bool exited = false;
+            {
+                std::unique_lock<std::mutex> lock(impl_->sync_mtx);
+                exited = impl_->host_cv.wait_for(
+                    lock, std::chrono::milliseconds(1500),
+                    [this]() { return impl_->phase == Impl::StepPhase::GuestExited; });
+            }
+            if (exited) {
+                impl_->guest_thread.join();
+            } else {
+                joined_cleanly = false;
+                impl_->guest_detached = true;
+                hle_win32_log(
+                    "RuntimeEngine::shutdown: guest thread did not exit within 1500ms; "
+                    "detaching to prevent iOS FrontBoard watchdog 0x8BADF00D");
+                impl_->guest_thread.detach();
+            }
         }
+
         {
             std::lock_guard<std::mutex> lock(impl_->sync_mtx);
-            impl_->phase = Impl::StepPhase::Idle;
-            impl_->stop_requested = false;
-            impl_->frame_in_flight = false;
+            if (joined_cleanly) {
+                impl_->phase = Impl::StepPhase::Idle;
+                impl_->stop_requested = false;
+                impl_->frame_in_flight = false;
+            }
         }
 
         audio_shutdown();
@@ -393,14 +456,18 @@ void RuntimeEngine::shutdown() {
         if (D3D9MetalBridge::active() == &impl_->d3d_bridge) {
             D3D9MetalBridge::set_active(nullptr);
         }
-        if (impl_->d3d_initialized) {
-            impl_->d3d_bridge.shutdown();
-            impl_->d3d_initialized = false;
+        if (joined_cleanly) {
+            if (impl_->d3d_initialized) {
+                impl_->d3d_bridge.shutdown();
+                impl_->d3d_initialized = false;
+            }
+            hle_win32_shutdown();
+            clear_dispatch_table();
+            impl_->rollback.clear_history();
+            impl_->mem.shutdown();
+        } else {
+            hle_win32_set_frame_yield_callback(nullptr);
         }
-        hle_win32_shutdown();
-        clear_dispatch_table();
-        impl_->rollback.clear_history();
-        impl_->mem.shutdown();
     }
 }
 

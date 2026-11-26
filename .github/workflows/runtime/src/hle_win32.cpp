@@ -8,6 +8,8 @@
 #import <CoreFoundation/CoreFoundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <CoreText/CoreText.h>
+extern "C" void* objc_autoreleasePoolPush(void);
+extern "C" void  objc_autoreleasePoolPop(void* pool);
 #endif
 
 #if !defined(_WIN32)
@@ -16,12 +18,14 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -83,6 +87,7 @@ constexpr uint32_t kERROR_INVALID_PARAMETER = 87u;
 constexpr uint32_t kERROR_ALREADY_EXISTS    = 183u;
 constexpr uint32_t kERROR_NO_MORE_FILES     = 18u;
 constexpr uint32_t kWAIT_OBJECT_0           = 0x00000000u;
+constexpr uint32_t kWAIT_IO_COMPLETION      = 0x000000C0u;
 constexpr uint32_t kWAIT_TIMEOUT            = 0x00000102u;
 constexpr uint32_t kWAIT_FAILED             = 0xFFFFFFFFu;
 constexpr uint32_t kWM_QUIT                 = 0x0012u;
@@ -91,6 +96,18 @@ constexpr uint32_t kHWND_MAIN               = 0x10000001u;
 constexpr uint32_t kHDC_MAIN                = 0x10000002u;
 constexpr uint32_t kHMENU_MAIN              = 0x10000003u;
 constexpr uint32_t kHINST_MAIN              = 0x00400000u;
+
+struct GuestThreadExit {
+    uint32_t code = 0u;
+};
+
+struct PendingApc {
+    uint32_t fn_va = 0u;
+    uint32_t dw_error = 0u;
+    uint32_t cb_transferred = 0u;
+    uint32_t lp_overlapped = 0u;
+    uint32_t dw_flags = 0u;
+};
 
 struct SyncEvent {
     bool manual_reset = false;
@@ -123,9 +140,8 @@ struct ThreadMessage {
 };
 
 struct SyncThread {
-    std::thread worker;
     uint32_t tid = 0;
-    uint32_t exit_code = 0;
+    std::atomic<uint32_t> exit_code{0};
     std::shared_ptr<SyncEvent> done_event = std::make_shared<SyncEvent>();
 };
 
@@ -205,6 +221,10 @@ struct Win32State {
     std::atomic<int> quit_code{0};
     std::thread::id main_thread_id;
     std::function<bool()> frame_yield_cb;
+    std::mutex worker_mtx;
+    std::condition_variable worker_cv;
+    int active_workers = 0;
+    std::mutex interlocked_mtx;
 
     std::atomic<uint32_t> next_tls{0u};
     std::array<bool, 64> tls_used{};
@@ -220,7 +240,78 @@ struct Win32State {
 Win32State g_w32;
 thread_local uint32_t tls_last_error = 0u;
 thread_local uint32_t tls_tid = 0u;
+thread_local bool tls_is_worker = false;
 thread_local std::array<uint32_t, 64> tls_values{};
+thread_local std::deque<PendingApc> tls_pending_apcs;
+
+bool dispatch_pending_apcs(CpuContext& ctx, GuestMemory& mem) {
+    const size_t count = tls_pending_apcs.size();
+    if (count == 0u) return false;
+    for (size_t i = 0; i < count; ++i) {
+        if (tls_pending_apcs.empty()) break;
+        if (g_w32.quit_requested.load(std::memory_order_acquire)) {
+            tls_pending_apcs.clear();
+            break;
+        }
+        const PendingApc apc = tls_pending_apcs.front();
+        tls_pending_apcs.pop_front();
+        if (apc.fn_va == 0u) continue;
+
+        const uint32_t saved_ebx = ctx.ebx;
+        const uint32_t saved_esi = ctx.esi;
+        const uint32_t saved_edi = ctx.edi;
+        const uint32_t saved_ebp = ctx.ebp;
+        const uint32_t saved_esp = ctx.esp;
+
+        // LPWSAOVERLAPPED_COMPLETION_ROUTINE(dwError, cbTransferred, lpOverlapped, dwFlags) [stdcall]
+        ctx.push32(mem, apc.dw_flags);
+        ctx.push32(mem, apc.lp_overlapped);
+        ctx.push32(mem, apc.cb_transferred);
+        ctx.push32(mem, apc.dw_error);
+        ctx.push32(mem, 0x00FFFFF4u); // Sentinel return EIP
+        call_indirect(ctx, mem, apc.fn_va);
+
+        ctx.esp = saved_esp;
+        ctx.ebx = saved_ebx;
+        ctx.esi = saved_esi;
+        ctx.edi = saved_edi;
+        ctx.ebp = saved_ebp;
+    }
+    return true;
+}
+
+void wake_all_sync_waiters() {
+    std::vector<std::shared_ptr<SyncEvent>> events;
+    std::vector<std::shared_ptr<SyncMutex>> mutexes;
+    std::vector<std::shared_ptr<SyncSemaphore>> sems;
+    {
+        std::lock_guard<std::mutex> lock(g_w32.state_mtx);
+        for (const auto& kv : g_w32.handles) {
+            const auto& r = kv.second;
+            if (r.kind == HandleKind::Event && r.event) {
+                events.push_back(r.event);
+            } else if (r.kind == HandleKind::Thread && r.thread && r.thread->done_event) {
+                events.push_back(r.thread->done_event);
+            } else if (r.kind == HandleKind::Mutex && r.mutex) {
+                mutexes.push_back(r.mutex);
+            } else if (r.kind == HandleKind::Semaphore && r.sem) {
+                sems.push_back(r.sem);
+            }
+        }
+    }
+    for (auto& ev : events) {
+        std::lock_guard<std::mutex> lk(ev->mtx);
+        ev->cv.notify_all();
+    }
+    for (auto& mx : mutexes) {
+        std::lock_guard<std::mutex> lk(mx->mtx);
+        mx->cv.notify_all();
+    }
+    for (auto& sm : sems) {
+        std::lock_guard<std::mutex> lk(sm->mtx);
+        sm->cv.notify_all();
+    }
+}
 
 uint32_t current_tid() {
     if (tls_tid == 0u) {
@@ -327,45 +418,73 @@ std::vector<std::string> split_win_path(const std::string& raw) {
 
 /// Resolves a Windows relative/asset path case-insensitively inside `g_w32.assets_dir`.
 fs::path resolve_asset_path(const std::string& win_path, bool for_write, bool* exists_out = nullptr) {
+    (void)for_write;
     if (exists_out) *exists_out = false;
     if (g_w32.assets_dir.empty()) return {};
 
-    // Check if an already-rooted POSIX path inside assets_dir was passed directly
     std::error_code ec;
     fs::path root(g_w32.assets_dir);
-    if (!win_path.empty() && win_path[0] == '/' &&
-        win_path.rfind(g_w32.assets_dir, 0) == 0) {
-        fs::path direct(win_path);
-        const bool ex = fs::exists(direct, ec);
-        if (exists_out) *exists_out = ex;
-        return direct;
+    std::string rel_path = win_path;
+
+    // If an already-rooted POSIX path inside assets_dir was passed (e.g. derived from
+    // GetModuleFileNameA + appended Windows subdirs), strip the assets_dir prefix so
+    // backslashes and case-insensitive segment matching still run on the suffix.
+    if (!rel_path.empty() && rel_path[0] == '/' &&
+        rel_path.rfind(g_w32.assets_dir, 0) == 0) {
+        const size_t base_len = g_w32.assets_dir.size();
+        if (rel_path.size() == base_len) {
+            ec.clear();
+            const bool ex = fs::exists(root, ec) && !ec;
+            if (exists_out) *exists_out = ex;
+            return root;
+        }
+        const char sep = rel_path[base_len];
+        if (sep == '/' || sep == '\\') {
+            rel_path = rel_path.substr(base_len + 1u);
+        }
     }
 
-    const auto parts = split_win_path(win_path);
+    const auto parts = split_win_path(rel_path);
     fs::path cur = root;
     for (size_t i = 0; i < parts.size(); ++i) {
         const std::string& seg = parts[i];
-        const std::string seg_low = ascii_lower(seg);
         bool matched = false;
 
-        if (fs::exists(cur, ec) && fs::is_directory(cur, ec)) {
-            for (const auto& entry : fs::directory_iterator(cur, ec)) {
-                const std::string fname = entry.path().filename().string();
-                if (ascii_lower(fname) == seg_low) {
-                    cur /= fname;
-                    matched = true;
-                    break;
+        // Fast-path exact-case lookup before scanning the directory.
+        const fs::path direct = cur / seg;
+        ec.clear();
+        if (fs::exists(direct, ec) && !ec) {
+            cur = direct;
+            matched = true;
+        } else {
+            ec.clear();
+            const bool cur_is_dir = fs::exists(cur, ec) && !ec && fs::is_directory(cur, ec) && !ec;
+            if (cur_is_dir) {
+                const std::string seg_low = ascii_lower(seg);
+                ec.clear();
+                for (fs::directory_iterator it(cur, ec), end; !ec && it != end; it.increment(ec)) {
+                    const std::string fname = it->path().filename().string();
+                    if (ascii_lower(fname) == seg_low) {
+                        cur /= fname;
+                        matched = true;
+                        break;
+                    }
                 }
             }
         }
+
         if (!matched) {
-            if (!for_write) {
-                return cur / seg;
+            // Preserve the full remaining normalized path instead of truncating at the first missing parent.
+            for (size_t j = i; j < parts.size(); ++j) {
+                cur /= parts[j];
             }
-            cur /= seg;
+            if (exists_out) *exists_out = false;
+            return cur;
         }
     }
-    if (exists_out) *exists_out = fs::exists(cur, ec);
+
+    ec.clear();
+    if (exists_out) *exists_out = fs::exists(cur, ec) && !ec;
     return cur;
 }
 
@@ -498,19 +617,18 @@ uint32_t wait_single_handle(uint32_t h, uint32_t timeout_ms) {
     auto calc_deadline = [timeout_ms]() {
         return std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     };
+    auto is_quitting = []() {
+        return g_w32.quit_requested.load(std::memory_order_acquire);
+    };
 
     if (rec.kind == HandleKind::Thread && rec.thread) {
-        if (timeout_ms == 0xFFFFFFFFu && rec.thread->worker.joinable()) {
-            rec.thread->worker.join();
-            return kWAIT_OBJECT_0;
-        }
         rec.event = rec.thread->done_event;
         rec.kind = HandleKind::Event;
     }
 
     if (rec.kind == HandleKind::Event && rec.event) {
         std::unique_lock<std::mutex> lock(rec.event->mtx);
-        auto pred = [&]() { return rec.event->signaled; };
+        auto pred = [&]() { return rec.event->signaled || is_quitting(); };
         if (!pred()) {
             if (timeout_ms == 0u) return kWAIT_TIMEOUT;
             if (timeout_ms == 0xFFFFFFFFu) {
@@ -518,6 +636,10 @@ uint32_t wait_single_handle(uint32_t h, uint32_t timeout_ms) {
             } else if (!rec.event->cv.wait_until(lock, calc_deadline(), pred)) {
                 return kWAIT_TIMEOUT;
             }
+        }
+        if (!rec.event->signaled && is_quitting()) {
+            if (tls_is_worker) throw GuestThreadExit{0u};
+            return kWAIT_OBJECT_0;
         }
         if (!rec.event->manual_reset) {
             rec.event->signaled = false;
@@ -528,7 +650,7 @@ uint32_t wait_single_handle(uint32_t h, uint32_t timeout_ms) {
     if (rec.kind == HandleKind::Mutex && rec.mutex) {
         const auto me = std::this_thread::get_id();
         std::unique_lock<std::mutex> lock(rec.mutex->mtx);
-        auto pred = [&]() { return !rec.mutex->owned || rec.mutex->owner == me; };
+        auto pred = [&]() { return !rec.mutex->owned || rec.mutex->owner == me || is_quitting(); };
         if (!pred()) {
             if (timeout_ms == 0u) return kWAIT_TIMEOUT;
             if (timeout_ms == 0xFFFFFFFFu) {
@@ -536,6 +658,10 @@ uint32_t wait_single_handle(uint32_t h, uint32_t timeout_ms) {
             } else if (!rec.mutex->cv.wait_until(lock, calc_deadline(), pred)) {
                 return kWAIT_TIMEOUT;
             }
+        }
+        if (rec.mutex->owned && rec.mutex->owner != me && is_quitting()) {
+            if (tls_is_worker) throw GuestThreadExit{0u};
+            return kWAIT_OBJECT_0;
         }
         rec.mutex->owned = true;
         rec.mutex->owner = me;
@@ -545,7 +671,7 @@ uint32_t wait_single_handle(uint32_t h, uint32_t timeout_ms) {
 
     if (rec.kind == HandleKind::Semaphore && rec.sem) {
         std::unique_lock<std::mutex> lock(rec.sem->mtx);
-        auto pred = [&]() { return rec.sem->count > 0; };
+        auto pred = [&]() { return rec.sem->count > 0 || is_quitting(); };
         if (!pred()) {
             if (timeout_ms == 0u) return kWAIT_TIMEOUT;
             if (timeout_ms == 0xFFFFFFFFu) {
@@ -553,6 +679,10 @@ uint32_t wait_single_handle(uint32_t h, uint32_t timeout_ms) {
             } else if (!rec.sem->cv.wait_until(lock, calc_deadline(), pred)) {
                 return kWAIT_TIMEOUT;
             }
+        }
+        if (rec.sem->count <= 0 && is_quitting()) {
+            if (tls_is_worker) throw GuestThreadExit{0u};
+            return kWAIT_OBJECT_0;
         }
         rec.sem->count--;
         return kWAIT_OBJECT_0;
@@ -959,8 +1089,6 @@ void k32_close_handle(CpuContext& ctx, GuestMemory& mem) {
     if (rec.kind == HandleKind::File && rec.file && rec.file->fp) {
         std::fclose(rec.file->fp);
         rec.file->fp = nullptr;
-    } else if (rec.kind == HandleKind::Thread && rec.thread && rec.thread->worker.joinable()) {
-        rec.thread->worker.detach();
     }
     ctx.eax = 1u;
     ctx.ret_stdcall(mem, 4u);
@@ -1179,7 +1307,15 @@ void k32_wait_single(CpuContext& ctx, GuestMemory& mem) {
 }
 
 void k32_wait_single_ex(CpuContext& ctx, GuestMemory& mem) {
-    ctx.eax = wait_single_handle(ctx.arg32(mem, 0), ctx.arg32(mem, 1));
+    const uint32_t h          = ctx.arg32(mem, 0);
+    const uint32_t timeout_ms = ctx.arg32(mem, 1);
+    const bool alertable      = ctx.arg32(mem, 2) != 0u;
+    if (alertable && dispatch_pending_apcs(ctx, mem)) {
+        ctx.eax = kWAIT_IO_COMPLETION;
+        ctx.ret_stdcall(mem, 12u);
+        return;
+    }
+    ctx.eax = wait_single_handle(h, timeout_ms);
     ctx.ret_stdcall(mem, 12u);
 }
 
@@ -1189,7 +1325,7 @@ void k32_wait_multiple(CpuContext& ctx, GuestMemory& mem) {
     const bool wait_all     = ctx.arg32(mem, 2) != 0u;
     const uint32_t timeout  = ctx.arg32(mem, 3);
 
-    if (count == 0u || arr_va == 0u) {
+    if (count == 0u || count > 64u || arr_va == 0u) {
         ctx.eax = kWAIT_FAILED;
         ctx.ret_stdcall(mem, 16u);
         return;
@@ -1197,7 +1333,14 @@ void k32_wait_multiple(CpuContext& ctx, GuestMemory& mem) {
 
     const auto start = std::chrono::steady_clock::now();
     for (;;) {
+        if (g_w32.quit_requested.load(std::memory_order_acquire)) {
+            if (tls_is_worker) throw GuestThreadExit{0u};
+            ctx.eax = kWAIT_OBJECT_0;
+            ctx.ret_stdcall(mem, 16u);
+            return;
+        }
         bool all_ok = true;
+        bool any_valid = false;
         for (uint32_t i = 0; i < count; ++i) {
             const uint32_t res = wait_single_handle(mem.r32(arr_va + i * 4u), 0u);
             if (res == kWAIT_OBJECT_0 && !wait_all) {
@@ -1205,7 +1348,13 @@ void k32_wait_multiple(CpuContext& ctx, GuestMemory& mem) {
                 ctx.ret_stdcall(mem, 16u);
                 return;
             }
+            if (res != kWAIT_FAILED) any_valid = true;
             if (res != kWAIT_OBJECT_0) all_ok = false;
+        }
+        if (!any_valid) {
+            ctx.eax = kWAIT_FAILED;
+            ctx.ret_stdcall(mem, 16u);
+            return;
         }
         if (wait_all && all_ok) {
             ctx.eax = kWAIT_OBJECT_0;
@@ -1265,9 +1414,23 @@ void k32_create_thread(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t param_va = ctx.arg32(mem, 3);
     const uint32_t tid_va   = ctx.arg32(mem, 5);
 
+    if (g_w32.quit_requested.load(std::memory_order_acquire)) {
+        ctx.eax = 0u;
+        ctx.ret_stdcall(mem, 24u);
+        return;
+    }
+
     const uint32_t spawn_no = g_log.thread_spawn_count.fetch_add(1u, std::memory_order_relaxed) + 1u;
+    if (start_va == 0u) {
+        const uint32_t fails = g_log.thread_fail_count.fetch_add(1u, std::memory_order_relaxed) + 1u;
+        hle_win32_log("CreateThread FAILED #%u (spawn #%u): null start_va", fails, spawn_no);
+        ctx.eax = 0u;
+        ctx.ret_stdcall(mem, 24u);
+        return;
+    }
+
     const uint32_t child_esp = mem.alloc_thread_stack();
-    if (start_va == 0u || child_esp == 0u) {
+    if (child_esp == 0u) {
         const uint32_t fails = g_log.thread_fail_count.fetch_add(1u, std::memory_order_relaxed) + 1u;
         hle_win32_log("CreateThread FAILED #%u (spawn #%u): start=0x%08x esp=0x%08x",
                       fails, spawn_no, start_va, child_esp);
@@ -1282,23 +1445,85 @@ void k32_create_thread(CpuContext& ctx, GuestMemory& mem) {
     if (tid_va) mem.w32(tid_va, th->tid);
 
     const uint32_t child_tid = th->tid;
-    auto done_ev = th->done_event;
     GuestMemory* mem_ptr = &mem;
 
-    th->worker = std::thread([mem_ptr, start_va, param_va, child_esp, child_tid, done_ev]() {
-        tls_tid = child_tid;
-        CpuContext tctx;
-        tctx.reset(child_esp, GuestMemory::kTebBase);
-        tctx.push32(*mem_ptr, param_va);
-        tctx.push32(*mem_ptr, 0x00FFFFF3u); // Sentinel return EIP
-        call_indirect(tctx, *mem_ptr, start_va);
-        mem_ptr->free_thread_stack(child_esp);
+    {
+        std::lock_guard<std::mutex> wlk(g_w32.worker_mtx);
+        ++g_w32.active_workers;
+    }
+
+    try {
+        std::thread([mem_ptr, start_va, param_va, child_esp, child_tid, th]() {
+            tls_tid = child_tid;
+            tls_is_worker = true;
+            tls_pending_apcs.clear();
+#if defined(__APPLE__)
+            void* pool = objc_autoreleasePoolPush();
+#endif
+            struct WorkerCleanupGuard {
+                GuestMemory* m;
+                uint32_t esp;
+                uint32_t tid;
+                std::shared_ptr<SyncThread> thread_obj;
+                uint32_t exit_code = 0u;
+#if defined(__APPLE__)
+                void* autorelease_pool;
+#endif
+                ~WorkerCleanupGuard() {
+                    tls_pending_apcs.clear();
+                    m->free_thread_stack(esp);
+                    {
+                        std::lock_guard<std::mutex> slk(g_w32.state_mtx);
+                        g_w32.thread_queues.erase(tid);
+                    }
+                    thread_obj->exit_code.store(exit_code, std::memory_order_relaxed);
+                    {
+                        std::lock_guard<std::mutex> dlk(thread_obj->done_event->mtx);
+                        thread_obj->done_event->signaled = true;
+                        thread_obj->done_event->cv.notify_all();
+                    }
+#if defined(__APPLE__)
+                    if (autorelease_pool != nullptr) {
+                        objc_autoreleasePoolPop(autorelease_pool);
+                    }
+#endif
+                    {
+                        std::lock_guard<std::mutex> wlk(g_w32.worker_mtx);
+                        if (g_w32.active_workers > 0) --g_w32.active_workers;
+                        g_w32.worker_cv.notify_all();
+                    }
+                }
+            } cleanup{
+                mem_ptr, child_esp, child_tid, th, 0u
+#if defined(__APPLE__)
+                , pool
+#endif
+            };
+
+            try {
+                CpuContext tctx;
+                tctx.reset(child_esp, GuestMemory::kTebBase);
+                tctx.push32(*mem_ptr, param_va);
+                tctx.push32(*mem_ptr, 0x00FFFFF3u); // Sentinel return EIP
+                call_indirect(tctx, *mem_ptr, start_va);
+                cleanup.exit_code = tctx.eax;
+            } catch (const GuestThreadExit& e) {
+                cleanup.exit_code = e.code;
+            }
+        }).detach();
+    } catch (...) {
+        mem.free_thread_stack(child_esp);
         {
-            std::lock_guard<std::mutex> lock(done_ev->mtx);
-            done_ev->signaled = true;
-            done_ev->cv.notify_all();
+            std::lock_guard<std::mutex> wlk(g_w32.worker_mtx);
+            if (g_w32.active_workers > 0) --g_w32.active_workers;
+            g_w32.worker_cv.notify_all();
         }
-    });
+        const uint32_t fails = g_log.thread_fail_count.fetch_add(1u, std::memory_order_relaxed) + 1u;
+        hle_win32_log("CreateThread FAILED #%u (spawn #%u): std::thread launch error", fails, spawn_no);
+        ctx.eax = 0u;
+        ctx.ret_stdcall(mem, 24u);
+        return;
+    }
 
     HandleRecord rec;
     rec.kind = HandleKind::Thread;
@@ -1308,11 +1533,20 @@ void k32_create_thread(CpuContext& ctx, GuestMemory& mem) {
 }
 
 void k32_exit_thread(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t exit_code = ctx.arg32(mem, 0);
+    if (tls_is_worker) {
+        throw GuestThreadExit{exit_code};
+    }
     ctx.ret_stdcall(mem, 4u);
 }
 
 void k32_sleep(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t ms = ctx.arg32(mem, 0);
+    if (g_w32.quit_requested.load(std::memory_order_acquire)) {
+        if (tls_is_worker) throw GuestThreadExit{0u};
+        ctx.ret_stdcall(mem, 4u);
+        return;
+    }
     if (ms > 0u) {
         std::this_thread::sleep_for(std::chrono::milliseconds(std::min(ms, 50u)));
     } else {
@@ -1322,9 +1556,27 @@ void k32_sleep(CpuContext& ctx, GuestMemory& mem) {
 }
 
 void k32_sleep_ex(CpuContext& ctx, GuestMemory& mem) {
-    const uint32_t ms = ctx.arg32(mem, 0);
+    const uint32_t ms      = ctx.arg32(mem, 0);
+    const bool alertable   = ctx.arg32(mem, 1) != 0u;
+
+    if (alertable && dispatch_pending_apcs(ctx, mem)) {
+        ctx.eax = kWAIT_IO_COMPLETION;
+        ctx.ret_stdcall(mem, 8u);
+        return;
+    }
+    if (g_w32.quit_requested.load(std::memory_order_acquire)) {
+        if (tls_is_worker) throw GuestThreadExit{0u};
+        ctx.eax = 0u;
+        ctx.ret_stdcall(mem, 8u);
+        return;
+    }
     if (ms > 0u) {
         std::this_thread::sleep_for(std::chrono::milliseconds(std::min(ms, 50u)));
+        if (alertable && dispatch_pending_apcs(ctx, mem)) {
+            ctx.eax = kWAIT_IO_COMPLETION;
+            ctx.ret_stdcall(mem, 8u);
+            return;
+        }
     } else {
         std::this_thread::yield();
     }
@@ -1565,6 +1817,7 @@ void k32_get_env_strings_w(CpuContext& ctx, GuestMemory& mem) {
 
 void k32_interlocked_inc(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t va = ctx.arg32(mem, 0);
+    std::lock_guard<std::mutex> lock(g_w32.interlocked_mtx);
     const int32_t v = static_cast<int32_t>(mem.r32(va)) + 1;
     mem.w32(va, static_cast<uint32_t>(v));
     ctx.eax = static_cast<uint32_t>(v);
@@ -1573,6 +1826,7 @@ void k32_interlocked_inc(CpuContext& ctx, GuestMemory& mem) {
 
 void k32_interlocked_dec(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t va = ctx.arg32(mem, 0);
+    std::lock_guard<std::mutex> lock(g_w32.interlocked_mtx);
     const int32_t v = static_cast<int32_t>(mem.r32(va)) - 1;
     mem.w32(va, static_cast<uint32_t>(v));
     ctx.eax = static_cast<uint32_t>(v);
@@ -1768,8 +2022,7 @@ void u32_post_thread_message_a(CpuContext& ctx, GuestMemory& mem) {
 void u32_post_quit_message(CpuContext& ctx, GuestMemory& mem) {
     const int code = static_cast<int>(ctx.arg32(mem, 0));
     hle_win32_log("PostQuitMessage(%d)", code);
-    g_w32.quit_code.store(code, std::memory_order_relaxed);
-    g_w32.quit_requested.store(true, std::memory_order_release);
+    hle_win32_post_quit(code);
     ctx.ret_stdcall(mem, 4u);
 }
 
@@ -2168,6 +2421,10 @@ void ws2_socket(CpuContext& ctx, GuestMemory& mem) {
         g_w32.last_wsa_error.store(errno, std::memory_order_relaxed);
         ctx.eax = 0xFFFFFFFFu;
     } else {
+#if defined(SO_NOSIGPIPE)
+        int nosig = 1;
+        ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &nosig, sizeof(nosig));
+#endif
         ctx.eax = static_cast<uint32_t>(fd);
     }
 #else
@@ -2196,8 +2453,55 @@ void ws2_connect(CpuContext& ctx, GuestMemory& mem) {
     const int fd = static_cast<int>(ctx.arg32(mem, 0));
     sockaddr_in sa{};
     fill_host_sockaddr(mem, ctx.arg32(mem, 1), sa);
-    const int rc = ::connect(fd, reinterpret_cast<const sockaddr*>(&sa), sizeof(sa));
-    if (rc < 0) g_w32.last_wsa_error.store(errno, std::memory_order_relaxed);
+
+    const int orig_flags = ::fcntl(fd, F_GETFL, 0);
+    const bool was_blocking = (orig_flags >= 0) && ((orig_flags & O_NONBLOCK) == 0);
+    if (was_blocking) {
+        ::fcntl(fd, F_SETFL, orig_flags | O_NONBLOCK);
+    }
+
+    int rc = ::connect(fd, reinterpret_cast<const sockaddr*>(&sa), sizeof(sa));
+    if (rc < 0 && was_blocking && errno == EINPROGRESS) {
+        constexpr int kConnectBudgetMs = 2500;
+        int waited_ms = 0;
+        bool connected = false;
+        while (waited_ms < kConnectBudgetMs) {
+            if (g_w32.quit_requested.load(std::memory_order_acquire)) {
+                g_w32.last_wsa_error.store(10054, std::memory_order_relaxed); // WSAECONNRESET
+                break;
+            }
+            struct pollfd pfd{};
+            pfd.fd = fd;
+            pfd.events = POLLOUT;
+            const int prc = ::poll(&pfd, 1, 50);
+            if (prc > 0) {
+                int so_err = 0;
+                socklen_t so_len = sizeof(so_err);
+                if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_err, &so_len) == 0 && so_err == 0) {
+                    connected = true;
+                    rc = 0;
+                } else {
+                    g_w32.last_wsa_error.store(so_err ? so_err : 10061, std::memory_order_relaxed);
+                }
+                break;
+            }
+            if (prc < 0 && errno != EINTR) {
+                g_w32.last_wsa_error.store(errno, std::memory_order_relaxed);
+                break;
+            }
+            waited_ms += 50;
+        }
+        if (!connected && rc < 0 && waited_ms >= kConnectBudgetMs) {
+            g_w32.last_wsa_error.store(10060, std::memory_order_relaxed); // WSAETIMEDOUT
+        }
+    } else if (rc < 0) {
+        const int err = (errno == EINPROGRESS || errno == EAGAIN || errno == EWOULDBLOCK) ? 10035 : errno;
+        g_w32.last_wsa_error.store(err, std::memory_order_relaxed);
+    }
+
+    if (was_blocking) {
+        ::fcntl(fd, F_SETFL, orig_flags);
+    }
     ctx.eax = static_cast<uint32_t>(rc);
 #else
     ctx.eax = 0xFFFFFFFFu;
@@ -2308,25 +2612,103 @@ void ws2_recvfrom(CpuContext& ctx, GuestMemory& mem) {
 
 void ws2_wsa_recv(CpuContext& ctx, GuestMemory& mem) {
 #if !defined(_WIN32)
-    const int fd = static_cast<int>(ctx.arg32(mem, 0));
-    const uint32_t bufs_va = ctx.arg32(mem, 1);
-    const uint32_t cnt = ctx.arg32(mem, 2);
+    const int fd            = static_cast<int>(ctx.arg32(mem, 0));
+    const uint32_t bufs_va  = ctx.arg32(mem, 1);
+    const uint32_t cnt      = ctx.arg32(mem, 2);
     const uint32_t recvd_va = ctx.arg32(mem, 3);
-    if (cnt > 0u && bufs_va != 0u) {
+    const uint32_t flags_va = ctx.arg32(mem, 4);
+    const uint32_t ovl_va   = ctx.arg32(mem, 5);
+    const uint32_t comp_va  = ctx.arg32(mem, 6);
+
+    if (fd >= 0 && cnt > 0u && bufs_va != 0u && mem.in_bounds(bufs_va, 8u)) {
         const uint32_t len = mem.r32(bufs_va + 0u);
         const uint32_t pva = mem.r32(bufs_va + 4u);
-        const ssize_t rc = ::recv(fd, mem.ptr(pva), len, 0);
+        uint8_t* dst = mem.ptr(pva);
+        if (!dst || !mem.in_bounds(pva, len)) {
+            g_w32.last_wsa_error.store(10014, std::memory_order_relaxed); // WSAEFAULT
+            ctx.eax = 0xFFFFFFFFu;
+            ctx.ret_stdcall(mem, 28u);
+            return;
+        }
+
+        const int fd_flags = ::fcntl(fd, F_GETFL, 0);
+        const bool is_nonblock = (fd_flags >= 0) && ((fd_flags & O_NONBLOCK) != 0);
+        if (!is_nonblock) {
+            constexpr int kRecvBudgetMs = 2500;
+            int waited_ms = 0;
+            bool ready = false;
+            while (waited_ms < kRecvBudgetMs) {
+                if (g_w32.quit_requested.load(std::memory_order_acquire)) {
+                    g_w32.last_wsa_error.store(10054, std::memory_order_relaxed); // WSAECONNRESET
+                    ctx.eax = 0xFFFFFFFFu;
+                    ctx.ret_stdcall(mem, 28u);
+                    return;
+                }
+                struct pollfd pfd{};
+                pfd.fd = fd;
+                pfd.events = POLLIN;
+                const int prc = ::poll(&pfd, 1, 50);
+                if (prc > 0) {
+                    ready = true;
+                    break;
+                }
+                if (prc < 0 && errno != EINTR) {
+                    g_w32.last_wsa_error.store(10054, std::memory_order_relaxed);
+                    ctx.eax = 0xFFFFFFFFu;
+                    ctx.ret_stdcall(mem, 28u);
+                    return;
+                }
+                waited_ms += 50;
+            }
+            if (!ready) {
+                g_w32.last_wsa_error.store(10060, std::memory_order_relaxed); // WSAETIMEDOUT
+                ctx.eax = 0xFFFFFFFFu;
+                ctx.ret_stdcall(mem, 28u);
+                return;
+            }
+        }
+
+        ssize_t rc = -1;
+        do {
+            rc = ::recv(fd, dst, len, 0);
+        } while (rc < 0 && errno == EINTR && !g_w32.quit_requested.load(std::memory_order_acquire));
+
         if (rc >= 0) {
-            if (recvd_va) mem.w32(recvd_va, static_cast<uint32_t>(rc));
+            const uint32_t bytes = static_cast<uint32_t>(rc);
+            if (recvd_va != 0u && mem.in_bounds(recvd_va, 4u)) {
+                mem.w32(recvd_va, bytes);
+            }
+            if (ovl_va != 0u && mem.in_bounds(ovl_va, 20u)) {
+                mem.w32(ovl_va + 0u, 0u);    // Internal = STATUS_SUCCESS
+                mem.w32(ovl_va + 4u, bytes); // InternalHigh = cbTransferred
+                if (comp_va == 0u) {
+                    const uint32_t ev = mem.r32(ovl_va + 16u);
+                    if (ev != 0u) hle_win32_signal_event(ev);
+                }
+            }
+            if (comp_va != 0u) {
+                const uint32_t in_flags = (flags_va != 0u && mem.in_bounds(flags_va, 4u)) ? mem.r32(flags_va) : 0u;
+                PendingApc apc;
+                apc.fn_va          = comp_va;
+                apc.dw_error       = 0u;
+                apc.cb_transferred = bytes;
+                apc.lp_overlapped  = ovl_va;
+                apc.dw_flags       = in_flags;
+                tls_pending_apcs.push_back(apc);
+            }
             ctx.eax = 0u;
             ctx.ret_stdcall(mem, 28u);
             return;
         }
-        g_w32.last_wsa_error.store((errno == EAGAIN || errno == EWOULDBLOCK) ? 10035 : errno,
-                                   std::memory_order_relaxed);
+        g_w32.last_wsa_error.store(
+            (errno == EAGAIN || errno == EWOULDBLOCK) ? 10035 : 10054,
+            std::memory_order_relaxed);
+    } else {
+        g_w32.last_wsa_error.store(10022, std::memory_order_relaxed); // WSAEINVAL
     }
     ctx.eax = 0xFFFFFFFFu;
 #else
+    g_w32.last_wsa_error.store(10054, std::memory_order_relaxed);
     ctx.eax = 0xFFFFFFFFu;
 #endif
     ctx.ret_stdcall(mem, 28u);
@@ -2380,17 +2762,30 @@ void ws2_inet_ntoa(CpuContext& ctx, GuestMemory& mem) {
 
 void ws2_gethostbyname(CpuContext& ctx, GuestMemory& mem) {
     const std::string name = mem.read_cstring(ctx.arg32(mem, 0));
-    uint32_t ip_be = 0x0100007Fu; // 127.0.0.1 fallback
+    const std::string low  = ascii_lower(name);
+    const bool is_local_name = low.empty() || low == "localhost" || low == "iphone-se-2020";
+
+    uint32_t ip_be = 0x0100007Fu; // 127.0.0.1 for local host fallback
+    bool resolved = is_local_name;
 #if !defined(_WIN32)
-    struct addrinfo hints{};
-    hints.ai_family = AF_INET;
-    struct addrinfo* res = nullptr;
-    if (::getaddrinfo(name.c_str(), nullptr, &hints, &res) == 0 && res != nullptr) {
-        auto* sin = reinterpret_cast<sockaddr_in*>(res->ai_addr);
-        std::memcpy(&ip_be, &sin->sin_addr.s_addr, 4);
-        ::freeaddrinfo(res);
+    if (!name.empty()) {
+        struct addrinfo hints{};
+        hints.ai_family = AF_INET;
+        struct addrinfo* res = nullptr;
+        if (::getaddrinfo(name.c_str(), nullptr, &hints, &res) == 0 && res != nullptr) {
+            auto* sin = reinterpret_cast<sockaddr_in*>(res->ai_addr);
+            std::memcpy(&ip_be, &sin->sin_addr.s_addr, 4);
+            ::freeaddrinfo(res);
+            resolved = true;
+        }
     }
 #endif
+    if (!resolved) {
+        g_w32.last_wsa_error.store(11001, std::memory_order_relaxed); // WSAHOST_NOT_FOUND
+        ctx.eax = 0u;
+        ctx.ret_stdcall(mem, 4u);
+        return;
+    }
     if (g_w32.hostent_va == 0u) g_w32.hostent_va = mem.alloc_thunk_block(128u, 8u);
     const uint32_t he   = g_w32.hostent_va;
     const uint32_t ipva = he + 32u;
@@ -2787,6 +3182,8 @@ void hle_win32_init(const std::string& assets_dir, uint32_t screen_width, uint32
         g_w32.temp_str_va    = 0u;
         g_w32.window_longs[static_cast<uint32_t>(-6)] = kHINST_MAIN; // GWL_HINSTANCE
         tls_tid              = 1u;
+        tls_is_worker        = false;
+        tls_pending_apcs.clear();
     }
     {
         std::lock_guard<std::mutex> llock(g_log.mtx);
@@ -2813,6 +3210,16 @@ void hle_win32_init(const std::string& assets_dir, uint32_t screen_width, uint32
 }
 
 void hle_win32_shutdown() {
+    g_w32.quit_requested.store(true, std::memory_order_release);
+    wake_all_sync_waiters();
+    {
+        std::unique_lock<std::mutex> wlk(g_w32.worker_mtx);
+        g_w32.worker_cv.wait_for(wlk, std::chrono::milliseconds(400), []() {
+            return g_w32.active_workers <= 0;
+        });
+    }
+    tls_pending_apcs.clear();
+
     std::unordered_map<uint32_t, HandleRecord> leftover;
     {
         std::lock_guard<std::mutex> lock(g_w32.state_mtx);
@@ -2828,8 +3235,6 @@ void hle_win32_shutdown() {
         if (kv.second.kind == HandleKind::File && kv.second.file && kv.second.file->fp) {
             std::fclose(kv.second.file->fp);
             kv.second.file->fp = nullptr;
-        } else if (kv.second.kind == HandleKind::Thread && kv.second.thread && kv.second.thread->worker.joinable()) {
-            kv.second.thread->worker.detach();
         }
     }
     {
@@ -2872,6 +3277,8 @@ void hle_win32_set_guest_main_thread() {
     std::lock_guard<std::mutex> lock(g_w32.state_mtx);
     g_w32.main_thread_id = std::this_thread::get_id();
     tls_tid = 1u;
+    tls_is_worker = false;
+    tls_pending_apcs.clear();
 }
 
 void hle_win32_set_frame_yield_callback(std::function<bool()> callback) {
@@ -2886,6 +3293,7 @@ std::string hle_win32_resolve_path(const std::string& guest_path, bool for_write
 void hle_win32_post_quit(int exit_code) {
     g_w32.quit_code.store(exit_code, std::memory_order_relaxed);
     g_w32.quit_requested.store(true, std::memory_order_release);
+    wake_all_sync_waiters();
 }
 
 bool hle_win32_is_quit_requested() noexcept {

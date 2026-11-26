@@ -24,10 +24,12 @@ namespace {
 
 constexpr uint32_t kDS_OK            = 0x00000000u;
 constexpr uint32_t kDSERR_INVALID    = 0x80070057u;
+constexpr uint32_t kDSERR_OUTOFMEM   = 0x8007000Eu;
 constexpr uint32_t kDSBPLAY_LOOPING  = 0x00000001u;
 constexpr uint32_t kDSBSTATUS_PLAYING= 0x00000001u;
 constexpr uint32_t kDSBSTATUS_LOOPING= 0x00000004u;
 constexpr uint32_t kDSBCAPS_PRIMARY  = 0x00000001u;
+constexpr uint32_t kDSBLOCK_FROMWRITE= 0x00000001u;
 constexpr uint32_t kDSBLOCK_ENTIRE   = 0x00000002u;
 
 constexpr uint32_t kOutputSampleRate = 44100u;
@@ -46,9 +48,12 @@ struct SoundVoice {
     uint32_t notify_obj_va   = 0;
     uint32_t guest_buf_va    = 0;
     uint32_t buffer_bytes    = 0;
+    uint32_t flags           = 0;
     uint32_t sample_rate     = 44100;
     uint16_t channels        = 2;
     uint16_t bits_per_sample = 16;
+    uint32_t buf_refcount    = 1;
+    uint32_t notify_refcount = 0;
     bool     is_primary      = false;
     bool     playing         = false;
     bool     looping         = false;
@@ -74,6 +79,7 @@ struct AudioState {
     uint32_t buf_vtable     = 0;
     uint32_t notify_vtable  = 0;
     uint32_t ds8_obj_va     = 0;
+    uint32_t health_tick    = 0;
 
 #if defined(__APPLE__)
     AudioQueueRef queue = nullptr;
@@ -154,6 +160,7 @@ void mix_output_frames(int16_t* out_interleaved, uint32_t num_frames) {
 
             const double step = static_cast<double>(v->sample_rate) / static_cast<double>(kOutputSampleRate);
             const uint32_t old_byte_pos = v->prev_byte_pos;
+            bool stopped_during_mix = false;
 
             for (uint32_t i = 0; i < num_frames; ++i) {
                 uint32_t idx0 = static_cast<uint32_t>(v->frame_cursor);
@@ -164,6 +171,7 @@ void mix_output_frames(int16_t* out_interleaved, uint32_t num_frames) {
                     } else {
                         v->playing = false;
                         v->frame_cursor = 0.0;
+                        stopped_during_mix = true;
                         for (const auto& np : v->notifies) {
                             if (np.offset_bytes == 0xFFFFFFFFu && np.event_handle != 0u) {
                                 events_to_signal.push_back(np.event_handle);
@@ -185,18 +193,28 @@ void mix_output_frames(int16_t* out_interleaved, uint32_t num_frames) {
                 v->frame_cursor += step;
             }
 
-            const uint32_t new_frame = static_cast<uint32_t>(v->frame_cursor) % total_frames;
-            const uint32_t new_byte_pos = new_frame * block_align;
-            for (const auto& np : v->notifies) {
-                if (np.offset_bytes == 0xFFFFFFFFu || np.event_handle == 0u) continue;
-                const bool crossed = (old_byte_pos <= new_byte_pos)
-                    ? (np.offset_bytes > old_byte_pos && np.offset_bytes <= new_byte_pos)
-                    : (np.offset_bytes > old_byte_pos || np.offset_bytes <= new_byte_pos);
-                if (crossed) {
-                    events_to_signal.push_back(np.event_handle);
+            if (stopped_during_mix) {
+                for (const auto& np : v->notifies) {
+                    if (np.offset_bytes == 0xFFFFFFFFu || np.event_handle == 0u) continue;
+                    if (np.offset_bytes > old_byte_pos && np.offset_bytes < v->pcm.size()) {
+                        events_to_signal.push_back(np.event_handle);
+                    }
                 }
+                v->prev_byte_pos = 0u;
+            } else {
+                const uint32_t new_frame = static_cast<uint32_t>(v->frame_cursor) % total_frames;
+                const uint32_t new_byte_pos = new_frame * block_align;
+                for (const auto& np : v->notifies) {
+                    if (np.offset_bytes == 0xFFFFFFFFu || np.event_handle == 0u) continue;
+                    const bool crossed = (old_byte_pos <= new_byte_pos)
+                        ? (np.offset_bytes > old_byte_pos && np.offset_bytes <= new_byte_pos)
+                        : (np.offset_bytes > old_byte_pos || np.offset_bytes <= new_byte_pos);
+                    if (crossed) {
+                        events_to_signal.push_back(np.event_handle);
+                    }
+                }
+                v->prev_byte_pos = new_byte_pos;
             }
-            v->prev_byte_pos = new_byte_pos;
         }
     }
 
@@ -231,30 +249,58 @@ std::shared_ptr<SoundVoice> find_voice(uint32_t obj_va) {
 }
 
 void ds_unk_addref(CpuContext& ctx, GuestMemory& mem) {
-    ctx.eax = 1u;
+    const uint32_t obj_va = ctx.arg32(mem, 0);
+    uint32_t refs = 1u;
+    {
+        std::lock_guard<std::mutex> lock(g_audio.mutex);
+        auto it = g_audio.voices_by_obj.find(obj_va);
+        if (it != g_audio.voices_by_obj.end() && it->second) {
+            if (obj_va == it->second->notify_obj_va) {
+                refs = ++it->second->notify_refcount;
+            } else {
+                refs = ++it->second->buf_refcount;
+            }
+        }
+    }
+    ctx.eax = refs;
     ctx.ret_stdcall(mem, 4u);
 }
 
 void ds_unk_release(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t obj_va = ctx.arg32(mem, 0);
     std::shared_ptr<SoundVoice> removed;
+    uint32_t remaining = 0u;
     {
         std::lock_guard<std::mutex> lock(g_audio.mutex);
         auto it = g_audio.voices_by_obj.find(obj_va);
-        if (it != g_audio.voices_by_obj.end() && obj_va != it->second->notify_obj_va) {
-            removed = it->second;
-            removed->playing = false;
-            g_audio.voices_by_obj.erase(obj_va);
-            g_audio.voices_by_obj.erase(removed->notify_obj_va);
-            g_audio.active_list.erase(
-                std::remove(g_audio.active_list.begin(), g_audio.active_list.end(), removed),
-                g_audio.active_list.end());
+        if (it != g_audio.voices_by_obj.end() && it->second) {
+            auto v = it->second;
+            if (obj_va == v->notify_obj_va) {
+                if (v->notify_refcount > 0u) --v->notify_refcount;
+                remaining = v->notify_refcount;
+            } else {
+                if (v->buf_refcount > 0u) --v->buf_refcount;
+                remaining = v->buf_refcount;
+                if (v->buf_refcount == 0u) {
+                    v->playing = false;
+                }
+            }
+            if (v->buf_refcount == 0u && v->notify_refcount == 0u) {
+                removed = v;
+                g_audio.voices_by_obj.erase(v->obj_va);
+                g_audio.voices_by_obj.erase(v->notify_obj_va);
+                g_audio.active_list.erase(
+                    std::remove(g_audio.active_list.begin(), g_audio.active_list.end(), removed),
+                    g_audio.active_list.end());
+            }
         }
     }
-    if (removed && removed->guest_buf_va != 0u) {
-        mem.guest_free(removed->guest_buf_va);
+    if (removed) {
+        if (removed->guest_buf_va != 0u) mem.guest_free(removed->guest_buf_va);
+        if (removed->obj_va != 0u) mem.guest_free(removed->obj_va);
+        if (removed->notify_obj_va != 0u) mem.guest_free(removed->notify_obj_va);
     }
-    ctx.eax = 0u;
+    ctx.eax = remaining;
     ctx.ret_stdcall(mem, 4u);
 }
 
@@ -279,12 +325,25 @@ void ds_query_interface(CpuContext& ctx, GuestMemory& mem) {
 
     // IID_IDirectSoundNotify: {B0210783-89CD-11D0-AF08-00A0C925CD16}
     if (iid[0] == 0x83 && iid[1] == 0x07 && iid[2] == 0x21 && iid[3] == 0xB0) {
-        auto v = find_voice(obj_va);
-        if (v && v->notify_obj_va != 0u) {
-            mem.w32(ppv_va, v->notify_obj_va);
+        std::lock_guard<std::mutex> lock(g_audio.mutex);
+        auto it = g_audio.voices_by_obj.find(obj_va);
+        if (it != g_audio.voices_by_obj.end() && it->second && it->second->notify_obj_va != 0u) {
+            ++it->second->notify_refcount;
+            mem.w32(ppv_va, it->second->notify_obj_va);
             ctx.eax = kDS_OK;
             ctx.ret_stdcall(mem, 12u);
             return;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_audio.mutex);
+        auto it = g_audio.voices_by_obj.find(obj_va);
+        if (it != g_audio.voices_by_obj.end() && it->second) {
+            if (obj_va == it->second->notify_obj_va) {
+                ++it->second->notify_refcount;
+            } else {
+                ++it->second->buf_refcount;
+            }
         }
     }
     mem.w32(ppv_va, obj_va);
@@ -293,21 +352,35 @@ void ds_query_interface(CpuContext& ctx, GuestMemory& mem) {
 }
 
 std::shared_ptr<SoundVoice> create_voice_object(
-    GuestMemory& mem, uint32_t buffer_bytes, uint32_t rate, uint16_t ch, uint16_t bits, bool primary) {
+    GuestMemory& mem, uint32_t buffer_bytes, uint32_t rate, uint16_t ch, uint16_t bits, bool primary, uint32_t flags) {
     auto v = std::make_shared<SoundVoice>();
     v->is_primary      = primary;
+    v->flags           = flags;
     v->buffer_bytes    = primary ? 0u : std::max<uint32_t>(buffer_bytes, 4096u);
     v->sample_rate     = (rate != 0u) ? rate : 44100u;
     v->channels        = (ch != 0u) ? ch : 2u;
     v->bits_per_sample = (bits == 8u || bits == 16u) ? bits : 16u;
+    v->buf_refcount    = 1u;
+    v->notify_refcount = 0u;
+
+    v->obj_va        = mem.guest_alloc(16u, 16u);
+    v->notify_obj_va = mem.guest_alloc(16u, 16u);
+    if (v->obj_va == 0u || v->notify_obj_va == 0u) {
+        if (v->obj_va != 0u) mem.guest_free(v->obj_va);
+        if (v->notify_obj_va != 0u) mem.guest_free(v->notify_obj_va);
+        return nullptr;
+    }
 
     if (!primary) {
         v->guest_buf_va = mem.guest_calloc(1u, v->buffer_bytes);
+        if (v->guest_buf_va == 0u) {
+            mem.guest_free(v->obj_va);
+            mem.guest_free(v->notify_obj_va);
+            return nullptr;
+        }
         v->pcm.assign(v->buffer_bytes, 0u);
     }
 
-    v->obj_va        = mem.alloc_thunk_block(16u, 8u);
-    v->notify_obj_va = mem.alloc_thunk_block(16u, 8u);
     mem.w32(v->obj_va, g_audio.buf_vtable);
     mem.w32(v->notify_obj_va, g_audio.notify_vtable);
 
@@ -317,6 +390,34 @@ std::shared_ptr<SoundVoice> create_voice_object(
     g_audio.voices_by_obj[v->notify_obj_va] = v;
     g_audio.active_list.push_back(v);
     return v;
+}
+
+// IDirectSound8::GetCaps(this, pDSCaps) -> 8 bytes
+void ds8_get_caps(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t caps_va = ctx.arg32(mem, 1);
+    if (caps_va == 0u) {
+        ctx.eax = kDSERR_INVALID;
+        ctx.ret_stdcall(mem, 8u);
+        return;
+    }
+    const uint32_t sz = mem.r32(caps_va + 0u);
+    if (sz >= 96u && mem.in_bounds(caps_va, sz)) {
+        mem.zero_bytes(caps_va + 4u, sz - 4u);
+        mem.w32(caps_va + 4u,  0x00000F10u); // DSCAPS_CONTINUOUSRATE | PRIMARY/SECONDARY STEREO+16BIT
+        mem.w32(caps_va + 8u,  100u);        // dwMinSecondarySampleRate
+        mem.w32(caps_va + 12u, 192000u);     // dwMaxSecondarySampleRate
+        mem.w32(caps_va + 16u, 1u);          // dwPrimaryBuffers
+        mem.w32(caps_va + 20u, 64u);         // dwMaxHwMixingAllBuffers
+        mem.w32(caps_va + 24u, 64u);         // dwMaxHwMixingStaticBuffers
+        mem.w32(caps_va + 28u, 64u);         // dwMaxHwMixingStreamingBuffers
+        mem.w32(caps_va + 32u, 64u);         // dwFreeHwMixingAllBuffers
+        mem.w32(caps_va + 36u, 64u);         // dwFreeHwMixingStaticBuffers
+        mem.w32(caps_va + 40u, 64u);         // dwFreeHwMixingStreamingBuffers
+        mem.w32(caps_va + 68u, 16u * 1024u * 1024u); // dwTotalHwMemBytes
+        mem.w32(caps_va + 72u, 16u * 1024u * 1024u); // dwFreeHwMemBytes
+    }
+    ctx.eax = kDS_OK;
+    ctx.ret_stdcall(mem, 8u);
 }
 
 // IDirectSound8::CreateSoundBuffer(this, pcDSBufferDesc, ppDSBuffer, pUnkOuter) -> 16 bytes
@@ -342,7 +443,13 @@ void ds8_create_sound_buffer(CpuContext& ctx, GuestMemory& mem) {
         bits = mem.r16(wfx_va + 14u);
     }
 
-    auto v = create_voice_object(mem, buffer_bytes, rate, ch, bits, is_primary);
+    auto v = create_voice_object(mem, buffer_bytes, rate, ch, bits, is_primary, flags);
+    if (!v) {
+        mem.w32(pp_va, 0u);
+        ctx.eax = kDSERR_OUTOFMEM;
+        ctx.ret_stdcall(mem, 16u);
+        return;
+    }
     mem.w32(pp_va, v->obj_va);
     ctx.eax = kDS_OK;
     ctx.ret_stdcall(mem, 16u);
@@ -359,7 +466,13 @@ void ds8_duplicate_sound_buffer(CpuContext& ctx, GuestMemory& mem) {
         return;
     }
     auto dup = create_voice_object(
-        mem, orig->buffer_bytes, orig->sample_rate, orig->channels, orig->bits_per_sample, orig->is_primary);
+        mem, orig->buffer_bytes, orig->sample_rate, orig->channels, orig->bits_per_sample, orig->is_primary, orig->flags);
+    if (!dup) {
+        mem.w32(pp_va, 0u);
+        ctx.eax = kDSERR_OUTOFMEM;
+        ctx.ret_stdcall(mem, 12u);
+        return;
+    }
     {
         std::lock_guard<std::mutex> lock(g_audio.mutex);
         dup->pcm = orig->pcm;
@@ -370,6 +483,100 @@ void ds8_duplicate_sound_buffer(CpuContext& ctx, GuestMemory& mem) {
     mem.w32(pp_va, dup->obj_va);
     ctx.eax = kDS_OK;
     ctx.ret_stdcall(mem, 12u);
+}
+
+// IDirectSoundBuffer::GetCaps(this, pDSBufferCaps) -> 8 bytes
+void dsb_get_caps(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t obj_va  = ctx.arg32(mem, 0);
+    const uint32_t caps_va = ctx.arg32(mem, 1);
+    auto v = find_voice(obj_va);
+    if (!v || caps_va == 0u || !mem.in_bounds(caps_va, 20u)) {
+        ctx.eax = kDSERR_INVALID;
+        ctx.ret_stdcall(mem, 8u);
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(g_audio.mutex);
+        mem.w32(caps_va + 4u,  v->flags);
+        mem.w32(caps_va + 8u,  v->buffer_bytes);
+        mem.w32(caps_va + 12u, 0u);
+        mem.w32(caps_va + 16u, 0u);
+    }
+    ctx.eax = kDS_OK;
+    ctx.ret_stdcall(mem, 8u);
+}
+
+// IDirectSoundBuffer::GetFormat(this, pwfxFormat, dwSizeAllocated, pdwSizeWritten) -> 16 bytes
+void dsb_get_format(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t obj_va     = ctx.arg32(mem, 0);
+    const uint32_t wfx_va     = ctx.arg32(mem, 1);
+    const uint32_t alloc_sz   = ctx.arg32(mem, 2);
+    const uint32_t written_va = ctx.arg32(mem, 3);
+    auto v = find_voice(obj_va);
+    if (!v) {
+        ctx.eax = kDSERR_INVALID;
+        ctx.ret_stdcall(mem, 16u);
+        return;
+    }
+    constexpr uint32_t kWfxSize = 18u;
+    if (wfx_va != 0u && alloc_sz >= 16u && mem.in_bounds(wfx_va, std::min(alloc_sz, kWfxSize))) {
+        std::lock_guard<std::mutex> lock(g_audio.mutex);
+        const uint16_t block_align = static_cast<uint16_t>(v->channels * (v->bits_per_sample / 8u));
+        const uint32_t avg_bps     = v->sample_rate * block_align;
+        mem.w16(wfx_va + 0u,  1u); // WAVE_FORMAT_PCM
+        mem.w16(wfx_va + 2u,  v->channels);
+        mem.w32(wfx_va + 4u,  v->sample_rate);
+        mem.w32(wfx_va + 8u,  avg_bps);
+        mem.w16(wfx_va + 12u, block_align);
+        mem.w16(wfx_va + 14u, v->bits_per_sample);
+        if (alloc_sz >= kWfxSize) {
+            mem.w16(wfx_va + 16u, 0u);
+        }
+    }
+    if (written_va != 0u && mem.in_bounds(written_va, 4u)) {
+        mem.w32(written_va, kWfxSize);
+    }
+    ctx.eax = kDS_OK;
+    ctx.ret_stdcall(mem, 16u);
+}
+
+// IDirectSoundBuffer::GetVolume(this, plVolume) -> 8 bytes
+void dsb_get_volume(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t obj_va = ctx.arg32(mem, 0);
+    const uint32_t out_va = ctx.arg32(mem, 1);
+    auto v = find_voice(obj_va);
+    if (v && out_va != 0u && mem.in_bounds(out_va, 4u)) {
+        std::lock_guard<std::mutex> lock(g_audio.mutex);
+        mem.w32(out_va, static_cast<uint32_t>(v->volume_mb));
+    }
+    ctx.eax = kDS_OK;
+    ctx.ret_stdcall(mem, 8u);
+}
+
+// IDirectSoundBuffer::GetPan(this, plPan) -> 8 bytes
+void dsb_get_pan(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t obj_va = ctx.arg32(mem, 0);
+    const uint32_t out_va = ctx.arg32(mem, 1);
+    auto v = find_voice(obj_va);
+    if (v && out_va != 0u && mem.in_bounds(out_va, 4u)) {
+        std::lock_guard<std::mutex> lock(g_audio.mutex);
+        mem.w32(out_va, static_cast<uint32_t>(v->pan_mb));
+    }
+    ctx.eax = kDS_OK;
+    ctx.ret_stdcall(mem, 8u);
+}
+
+// IDirectSoundBuffer::GetFrequency(this, pdwFrequency) -> 8 bytes
+void dsb_get_frequency(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t obj_va = ctx.arg32(mem, 0);
+    const uint32_t out_va = ctx.arg32(mem, 1);
+    auto v = find_voice(obj_va);
+    if (v && out_va != 0u && mem.in_bounds(out_va, 4u)) {
+        std::lock_guard<std::mutex> lock(g_audio.mutex);
+        mem.w32(out_va, v->sample_rate);
+    }
+    ctx.eax = kDS_OK;
+    ctx.ret_stdcall(mem, 8u);
 }
 
 // IDirectSoundBuffer::GetCurrentPosition(this, pdwPlay, pdwWrite) -> 12 bytes
@@ -426,6 +633,11 @@ void dsb_lock(CpuContext& ctx, GuestMemory& mem) {
         return;
     }
 
+    if (flags & kDSBLOCK_FROMWRITE) {
+        std::lock_guard<std::mutex> lock(g_audio.mutex);
+        const uint32_t block_align = std::max<uint32_t>(1u, v->channels * (v->bits_per_sample / 8u));
+        offset = (static_cast<uint32_t>(v->frame_cursor) * block_align) % v->buffer_bytes;
+    }
     if (flags & kDSBLOCK_ENTIRE) {
         offset = 0u;
         bytes = v->buffer_bytes;
@@ -485,6 +697,12 @@ void dsb_play(CpuContext& ctx, GuestMemory& mem) {
     auto v = find_voice(obj_va);
     if (v) {
         std::lock_guard<std::mutex> lock(g_audio.mutex);
+        if (!v->playing) {
+            const uint32_t block_align = std::max<uint32_t>(1u, v->channels * (v->bits_per_sample / 8u));
+            v->prev_byte_pos = (v->buffer_bytes > 0u)
+                ? ((static_cast<uint32_t>(v->frame_cursor) * block_align) % v->buffer_bytes)
+                : 0u;
+        }
         v->playing = true;
         v->looping = (flags & kDSBPLAY_LOOPING) != 0u;
     }
@@ -526,9 +744,12 @@ void dsb_set_format(CpuContext& ctx, GuestMemory& mem) {
     auto v = find_voice(obj_va);
     if (v && wfx_va != 0u) {
         std::lock_guard<std::mutex> lock(g_audio.mutex);
-        v->channels        = mem.r16(wfx_va + 2u);
-        v->sample_rate     = mem.r32(wfx_va + 4u);
-        v->bits_per_sample = mem.r16(wfx_va + 14u);
+        const uint16_t ch   = mem.r16(wfx_va + 2u);
+        const uint32_t rate = mem.r32(wfx_va + 4u);
+        const uint16_t bits = mem.r16(wfx_va + 14u);
+        if (ch != 0u) v->channels = ch;
+        if (rate >= 100u && rate <= 192000u) v->sample_rate = rate;
+        if (bits == 8u || bits == 16u) v->bits_per_sample = bits;
     }
     ctx.eax = kDS_OK;
     ctx.ret_stdcall(mem, 8u);
@@ -614,7 +835,7 @@ void ensure_dsound_objects(GuestMemory& mem) {
         &ds_unk_addref,
         &ds_unk_release,
         &ds8_create_sound_buffer,    // +0x0C
-        &ds_ret_ok<8u>,              // +0x10 GetCaps
+        &ds8_get_caps,               // +0x10 GetCaps
         &ds8_duplicate_sound_buffer, // +0x14
         &ds_ret_ok<12u>,             // +0x18 SetCooperativeLevel
         &ds_ret_ok<4u>,              // +0x1C Compact
@@ -629,12 +850,12 @@ void ensure_dsound_objects(GuestMemory& mem) {
         &ds_query_interface,
         &ds_unk_addref,
         &ds_unk_release,
-        &ds_ret_ok<8u>,             // +0x0C GetCaps
+        &dsb_get_caps,              // +0x0C GetCaps
         &dsb_get_current_position,  // +0x10
-        &ds_ret_ok<16u>,            // +0x14 GetFormat
-        &ds_ret_ok<8u>,             // +0x18 GetVolume
-        &ds_ret_ok<8u>,             // +0x1C GetPan
-        &ds_ret_ok<8u>,             // +0x20 GetFrequency
+        &dsb_get_format,            // +0x14 GetFormat
+        &dsb_get_volume,            // +0x18 GetVolume
+        &dsb_get_pan,               // +0x1C GetPan
+        &dsb_get_frequency,         // +0x20 GetFrequency
         &dsb_get_status,            // +0x24
         &ds_ret_ok<12u>,            // +0x28 Initialize
         &dsb_lock,                  // +0x2C
@@ -673,12 +894,19 @@ void audio_init() {
     @autoreleasepool {
         AVAudioSession* session = [AVAudioSession sharedInstance];
         NSError* err = nil;
-        [session setCategory:AVAudioSessionCategoryAmbient
-                 withOptions:AVAudioSessionCategoryOptionMixWithOthers
-                       error:&err];
+        if (![session setCategory:AVAudioSessionCategoryPlayback
+                      withOptions:AVAudioSessionCategoryOptionMixWithOthers
+                            error:&err]) {
+            hle_win32_log("AVAudioSession setCategory failed: %s",
+                          err ? err.localizedDescription.UTF8String : "unknown");
+        }
         [session setPreferredSampleRate:static_cast<double>(kOutputSampleRate) error:nil];
         [session setPreferredIOBufferDuration:0.0116 error:nil];
-        [session setActive:YES error:&err];
+        err = nil;
+        if (![session setActive:YES error:&err]) {
+            hle_win32_log("AVAudioSession setActive failed: %s",
+                          err ? err.localizedDescription.UTF8String : "unknown");
+        }
     }
 #endif
 
@@ -702,9 +930,12 @@ void audio_init() {
                 AudioQueueEnqueueBuffer(g_audio.queue, g_audio.aq_buffers[i], 0, nullptr);
             }
         }
-        AudioQueueStart(g_audio.queue, nullptr);
+        const OSStatus start_st = AudioQueueStart(g_audio.queue, nullptr);
+        if (start_st != noErr) {
+            hle_win32_log("AudioQueueStart failed status=%d", static_cast<int>(start_st));
+        }
     } else {
-        std::fprintf(stderr, "[hle_audio] AudioQueueNewOutput failed status=%d\n", static_cast<int>(st));
+        hle_win32_log("AudioQueueNewOutput failed status=%d", static_cast<int>(st));
     }
 #endif
 }
@@ -718,12 +949,19 @@ void audio_shutdown() {
         AudioQueueDispose(g_audio.queue, true);
         g_audio.queue = nullptr;
     }
+    for (uint32_t i = 0; i < kNumAudioBuffers; ++i) {
+        g_audio.aq_buffers[i] = nullptr;
+    }
 #endif
 
     std::lock_guard<std::mutex> lock(g_audio.mutex);
     g_audio.voices_by_obj.clear();
     g_audio.active_list.clear();
-    g_audio.ds8_obj_va = 0u;
+    g_audio.ds8_vtable    = 0u;
+    g_audio.buf_vtable    = 0u;
+    g_audio.notify_vtable = 0u;
+    g_audio.ds8_obj_va    = 0u;
+    g_audio.health_tick   = 0u;
 }
 
 void audio_set_muted(bool muted) {
@@ -732,6 +970,25 @@ void audio_set_muted(bool muted) {
 
 void audio_update_streams() {
     // AudioQueue callback handles live mixing and DirectSoundNotify event dispatch asynchronously.
+    // Periodically verify AudioQueue stayed running after iOS interruptions / route changes.
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    if (!g_audio.initialized.load(std::memory_order_relaxed) || g_audio.queue == nullptr) {
+        return;
+    }
+    if ((++g_audio.health_tick % 60u) != 0u) {
+        return;
+    }
+    UInt32 is_running = 0u;
+    UInt32 prop_size = sizeof(is_running);
+    if (AudioQueueGetProperty(g_audio.queue, kAudioQueueProperty_IsRunning, &is_running, &prop_size) == noErr &&
+        is_running == 0u) {
+        @autoreleasepool {
+            AVAudioSession* session = [AVAudioSession sharedInstance];
+            [session setActive:YES error:nil];
+        }
+        AudioQueueStart(g_audio.queue, nullptr);
+    }
+#endif
 }
 
 // DirectSoundCreate8(lpcGuidDevice, ppDS8, pUnkOuter) -> 12 bytes

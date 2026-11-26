@@ -41,6 +41,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace mbaa_recomp {
@@ -75,6 +76,8 @@ constexpr uint32_t kFmtX1R5G5B5 = 24u;
 constexpr uint32_t kFmtA1R5G5B5 = 25u;
 constexpr uint32_t kFmtA4R4G4B4 = 26u;
 constexpr uint32_t kFmtA8       = 28u;
+constexpr uint32_t kFmtA8P8     = 40u;
+constexpr uint32_t kFmtP8       = 41u;
 constexpr uint32_t kFmtL8       = 50u;
 constexpr uint32_t kFmtD16      = 80u;
 constexpr uint32_t kFmtD24S8    = 75u;
@@ -84,9 +87,14 @@ constexpr uint32_t kFmtDXT3     = 0x33545844u;
 constexpr uint32_t kFmtDXT4     = 0x34545844u;
 constexpr uint32_t kFmtDXT5     = 0x35545844u;
 
-// D3DUSAGE & D3DPOOL
+// D3DUSAGE, D3DPOOL, & D3DLOCK flags
 constexpr uint32_t kUsageRenderTarget = 0x00000001u;
 constexpr uint32_t kUsageDepthStencil = 0x00000002u;
+constexpr uint32_t kPoolDefault       = 0u;
+constexpr uint32_t kPoolManaged       = 1u;
+constexpr uint32_t kPoolSystemMem     = 2u;
+constexpr uint32_t kD3DLockReadOnly   = 0x00000010u;
+constexpr uint32_t kD3DLockDiscard    = 0x00002000u;
 
 // D3DRENDERSTATETYPE values used by MBAA.exe
 constexpr uint32_t kRsZEnable                  = 7u;
@@ -145,6 +153,12 @@ struct TextureRecord {
     bool     is_backbuffer   = false;
     bool     locked          = false;
     bool     evicted         = false;
+    bool     cpu_valid       = false;
+    bool     lock_readonly   = false;
+    uint32_t lock_x          = 0;
+    uint32_t lock_y          = 0;
+    uint32_t lock_w          = 0;
+    uint32_t lock_h          = 0;
     uint64_t last_used_tick  = 0;
     size_t   gpu_bytes       = 0;
 
@@ -153,7 +167,7 @@ struct TextureRecord {
     uint32_t staging_pitch   = 0;
     uint32_t staging_bytes   = 0;
     uint32_t surface_guest_va = 0; // cached level-0 IDirect3DSurface9*
-    std::vector<uint8_t> cpu_backup; // optional RGBA8/BGRA8 backup for LRU re-hydration
+    std::vector<uint8_t> cpu_backup; // canonical BGRA8 / 1B / 2B backup matching d3d_fmt_to_mtl()
 };
 
 struct SurfaceRecord {
@@ -170,7 +184,14 @@ struct SurfaceRecord {
     uint32_t staging_va     = 0;
     uint32_t staging_pitch  = 0;
     uint32_t staging_bytes  = 0;
+    uint32_t lock_x         = 0;
+    uint32_t lock_y         = 0;
+    uint32_t lock_w         = 0;
+    uint32_t lock_h         = 0;
     bool     locked         = false;
+    bool     cpu_valid      = false;
+    bool     lock_readonly  = false;
+    std::vector<uint8_t> cpu_backup;
 };
 
 struct EffectRecord {
@@ -338,6 +359,22 @@ inline std::array<float, 16> mul_matrix(const std::array<float, 16>& a, const st
     return r;
 }
 
+inline bool is_dxt_format(uint32_t fmt) noexcept {
+    return fmt == kFmtDXT1 || fmt == kFmtDXT2 || fmt == kFmtDXT3 ||
+           fmt == kFmtDXT4 || fmt == kFmtDXT5;
+}
+
+inline DxtFormat d3d_to_dxt_format(uint32_t fmt) noexcept {
+    switch (fmt) {
+        case kFmtDXT1: return DxtFormat::DXT1;
+        case kFmtDXT2: return DxtFormat::DXT2;
+        case kFmtDXT3: return DxtFormat::DXT3;
+        case kFmtDXT4: return DxtFormat::DXT4;
+        case kFmtDXT5: return DxtFormat::DXT5;
+        default:       return DxtFormat::Unknown;
+    }
+}
+
 inline uint32_t bytes_per_pixel_for_d3d_fmt(uint32_t fmt) noexcept {
     switch (fmt) {
         case kFmtR8G8B8:   return 3u;
@@ -345,9 +382,11 @@ inline uint32_t bytes_per_pixel_for_d3d_fmt(uint32_t fmt) noexcept {
         case kFmtX1R5G5B5:
         case kFmtA1R5G5B5:
         case kFmtA4R4G4B4:
+        case kFmtA8P8:
         case kFmtD16:      return 2u;
         case kFmtA8:
-        case kFmtL8:       return 1u;
+        case kFmtL8:
+        case kFmtP8:       return 1u;
         default:           return 4u;
     }
 }
@@ -355,15 +394,33 @@ inline uint32_t bytes_per_pixel_for_d3d_fmt(uint32_t fmt) noexcept {
 inline MTLPixelFormat d3d_fmt_to_mtl(uint32_t fmt) noexcept {
     switch (fmt) {
         case kFmtA8:       return MTLPixelFormatA8Unorm;
-        case kFmtL8:       return MTLPixelFormatR8Unorm;
+        case kFmtL8:
+        case kFmtP8:       return MTLPixelFormatR8Unorm;
+        case kFmtA8P8:     return MTLPixelFormatRG8Unorm;
         case kFmtDXT1:
         case kFmtDXT2:
         case kFmtDXT3:
         case kFmtDXT4:
-        case kFmtDXT5:     return MTLPixelFormatRGBA8Unorm; // decoded on CPU via bcdec_dxt.cpp
+        case kFmtDXT5:
         case kFmtA8R8G8B8:
         case kFmtX8R8G8B8:
         default:           return MTLPixelFormatBGRA8Unorm;
+    }
+}
+
+inline uint32_t mtl_bytes_per_pixel(MTLPixelFormat fmt) noexcept {
+    switch (fmt) {
+        case MTLPixelFormatA8Unorm:
+        case MTLPixelFormatR8Unorm:  return 1u;
+        case MTLPixelFormatRG8Unorm: return 2u;
+        default:                     return 4u;
+    }
+}
+
+inline void rgba8_to_bgra8_inplace(std::vector<uint8_t>& buf) noexcept {
+    const size_t px = buf.size() / 4u;
+    for (size_t i = 0; i < px; ++i) {
+        std::swap(buf[i * 4u + 0u], buf[i * 4u + 2u]);
     }
 }
 
@@ -416,11 +473,34 @@ inline void convert_staging_to_mtl_pixels(
     std::vector<uint8_t>& out_bytes,
     uint32_t& out_pitch)
 {
-    if (fmt == kFmtA8 || fmt == kFmtL8) {
+    if (fmt == kFmtA8 || fmt == kFmtL8 || fmt == kFmtP8) {
         out_pitch = w;
         out_bytes.resize(static_cast<size_t>(w) * h);
         for (uint32_t y = 0; y < h; ++y) {
-            std::memcpy(out_bytes.data() + y * out_pitch, src + y * src_pitch, w);
+            std::memcpy(out_bytes.data() + static_cast<size_t>(y) * out_pitch,
+                        src + static_cast<size_t>(y) * src_pitch, w);
+        }
+        return;
+    }
+    if (fmt == kFmtA8P8) {
+        out_pitch = w * 2u;
+        out_bytes.resize(static_cast<size_t>(out_pitch) * h);
+        for (uint32_t y = 0; y < h; ++y) {
+            std::memcpy(out_bytes.data() + static_cast<size_t>(y) * out_pitch,
+                        src + static_cast<size_t>(y) * src_pitch, out_pitch);
+        }
+        return;
+    }
+    if (is_dxt_format(fmt)) {
+        out_pitch = w * 4u;
+        const uint32_t blocks_y = std::max(1u, (h + 3u) / 4u);
+        std::vector<uint8_t> decoded;
+        if (decode_dxt_image(d3d_to_dxt_format(fmt), w, h, src,
+                             static_cast<size_t>(src_pitch) * blocks_y, decoded)) {
+            rgba8_to_bgra8_inplace(decoded);
+            out_bytes = std::move(decoded);
+        } else {
+            out_bytes.assign(static_cast<size_t>(out_pitch) * h, 0u);
         }
         return;
     }
@@ -483,6 +563,157 @@ inline void convert_staging_to_mtl_pixels(
         } else {
             std::memcpy(drow, srow, out_pitch);
         }
+    }
+}
+
+inline void write_staging_rect_to_cpu_backup(
+    uint32_t fmt,
+    uint32_t tex_w,
+    uint32_t tex_h,
+    uint32_t rx,
+    uint32_t ry,
+    uint32_t rw,
+    uint32_t rh,
+    const uint8_t* src,
+    uint32_t src_pitch,
+    std::vector<uint8_t>& cpu_backup)
+{
+    const MTLPixelFormat mfmt = d3d_fmt_to_mtl(fmt);
+    const uint32_t m_bpp = mtl_bytes_per_pixel(mfmt);
+    const size_t full_bytes = static_cast<size_t>(tex_w) * tex_h * m_bpp;
+    if (cpu_backup.size() != full_bytes) {
+        cpu_backup.assign(full_bytes, 0u);
+    }
+
+    std::vector<uint8_t> conv;
+    uint32_t conv_pitch = 0u;
+    convert_staging_to_mtl_pixels(fmt, rw, rh, src, src_pitch, conv, conv_pitch);
+
+    const uint32_t dst_row_bytes = tex_w * m_bpp;
+    const uint32_t copy_bytes = rw * m_bpp;
+    for (uint32_t y = 0; y < rh; ++y) {
+        if (ry + y >= tex_h) break;
+        uint8_t* dst_row = cpu_backup.data() + static_cast<size_t>(ry + y) * dst_row_bytes + static_cast<size_t>(rx) * m_bpp;
+        const uint8_t* src_row = conv.data() + static_cast<size_t>(y) * conv_pitch;
+        std::memcpy(dst_row, src_row, copy_bytes);
+    }
+}
+
+inline void convert_mtl_rect_to_staging(
+    uint32_t fmt,
+    uint32_t tex_w,
+    uint32_t rx,
+    uint32_t ry,
+    uint32_t rw,
+    uint32_t rh,
+    const uint8_t* cpu_backup,
+    uint8_t* dst,
+    uint32_t dst_pitch)
+{
+    const MTLPixelFormat mfmt = d3d_fmt_to_mtl(fmt);
+    const uint32_t m_bpp = mtl_bytes_per_pixel(mfmt);
+    const uint32_t src_row_bytes = tex_w * m_bpp;
+
+    for (uint32_t y = 0; y < rh; ++y) {
+        const uint8_t* srow = cpu_backup + static_cast<size_t>(ry + y) * src_row_bytes + static_cast<size_t>(rx) * m_bpp;
+        uint8_t* drow = dst + static_cast<size_t>(y) * dst_pitch;
+
+        if (fmt == kFmtA8 || fmt == kFmtL8 || fmt == kFmtP8) {
+            std::memcpy(drow, srow, rw);
+        } else if (fmt == kFmtA8P8) {
+            std::memcpy(drow, srow, static_cast<size_t>(rw) * 2u);
+        } else if (fmt == kFmtA8R8G8B8 || fmt == kFmtX8R8G8B8 || fmt == kFmtUnknown) {
+            std::memcpy(drow, srow, static_cast<size_t>(rw) * 4u);
+        } else if (fmt == kFmtR8G8B8) {
+            for (uint32_t x = 0; x < rw; ++x) {
+                drow[x * 3u + 0u] = srow[x * 4u + 0u];
+                drow[x * 3u + 1u] = srow[x * 4u + 1u];
+                drow[x * 3u + 2u] = srow[x * 4u + 2u];
+            }
+        } else if (fmt == kFmtR5G6B5) {
+            for (uint32_t x = 0; x < rw; ++x) {
+                const uint16_t b = static_cast<uint16_t>(srow[x * 4u + 0u] >> 3);
+                const uint16_t g = static_cast<uint16_t>(srow[x * 4u + 1u] >> 2);
+                const uint16_t r = static_cast<uint16_t>(srow[x * 4u + 2u] >> 3);
+                const uint16_t p = static_cast<uint16_t>((r << 11) | (g << 5) | b);
+                drow[x * 2u + 0u] = static_cast<uint8_t>(p & 0xFFu);
+                drow[x * 2u + 1u] = static_cast<uint8_t>(p >> 8);
+            }
+        } else if (fmt == kFmtA1R5G5B5 || fmt == kFmtX1R5G5B5) {
+            for (uint32_t x = 0; x < rw; ++x) {
+                const uint16_t b = static_cast<uint16_t>(srow[x * 4u + 0u] >> 3);
+                const uint16_t g = static_cast<uint16_t>(srow[x * 4u + 1u] >> 3);
+                const uint16_t r = static_cast<uint16_t>(srow[x * 4u + 2u] >> 3);
+                const uint16_t a = (fmt == kFmtA1R5G5B5) ? ((srow[x * 4u + 3u] >= 128u) ? 0x8000u : 0u) : 0x8000u;
+                const uint16_t p = static_cast<uint16_t>(a | (r << 10) | (g << 5) | b);
+                drow[x * 2u + 0u] = static_cast<uint8_t>(p & 0xFFu);
+                drow[x * 2u + 1u] = static_cast<uint8_t>(p >> 8);
+            }
+        } else if (fmt == kFmtA4R4G4B4) {
+            for (uint32_t x = 0; x < rw; ++x) {
+                const uint16_t b = static_cast<uint16_t>(srow[x * 4u + 0u] >> 4);
+                const uint16_t g = static_cast<uint16_t>(srow[x * 4u + 1u] >> 4);
+                const uint16_t r = static_cast<uint16_t>(srow[x * 4u + 2u] >> 4);
+                const uint16_t a = static_cast<uint16_t>(srow[x * 4u + 3u] >> 4);
+                const uint16_t p = static_cast<uint16_t>((a << 12) | (r << 8) | (g << 4) | b);
+                drow[x * 2u + 0u] = static_cast<uint8_t>(p & 0xFFu);
+                drow[x * 2u + 1u] = static_cast<uint8_t>(p >> 8);
+            }
+        } else {
+            std::memcpy(drow, srow, static_cast<size_t>(rw) * 4u);
+        }
+    }
+}
+
+inline void parse_clamped_lock_rect(
+    const GuestMemory& mem,
+    uint32_t rect_va,
+    uint32_t tex_w,
+    uint32_t tex_h,
+    uint32_t& out_x,
+    uint32_t& out_y,
+    uint32_t& out_w,
+    uint32_t& out_h) noexcept
+{
+    out_x = 0u;
+    out_y = 0u;
+    out_w = std::max(1u, tex_w);
+    out_h = std::max(1u, tex_h);
+    if (rect_va != 0u && mem.in_bounds(rect_va, 16u)) {
+        const int32_t l = static_cast<int32_t>(mem.r32(rect_va + 0u));
+        const int32_t t = static_cast<int32_t>(mem.r32(rect_va + 4u));
+        const int32_t r = static_cast<int32_t>(mem.r32(rect_va + 8u));
+        const int32_t b = static_cast<int32_t>(mem.r32(rect_va + 12u));
+        if (r > l && b > t) {
+            const int32_t cl = std::clamp<int32_t>(l, 0, static_cast<int32_t>(tex_w) - 1);
+            const int32_t ct = std::clamp<int32_t>(t, 0, static_cast<int32_t>(tex_h) - 1);
+            const int32_t cr = std::clamp<int32_t>(r, cl + 1, static_cast<int32_t>(tex_w));
+            const int32_t cb = std::clamp<int32_t>(b, ct + 1, static_cast<int32_t>(tex_h));
+            out_x = static_cast<uint32_t>(cl);
+            out_y = static_cast<uint32_t>(ct);
+            out_w = static_cast<uint32_t>(cr - cl);
+            out_h = static_cast<uint32_t>(cb - ct);
+        }
+    }
+}
+
+inline void compute_lock_pitch_bytes(
+    uint32_t fmt,
+    uint32_t rw,
+    uint32_t rh,
+    uint32_t& out_pitch,
+    uint32_t& out_bytes) noexcept
+{
+    if (is_dxt_format(fmt)) {
+        const uint32_t bx = std::max(1u, (rw + 3u) / 4u);
+        const uint32_t by = std::max(1u, (rh + 3u) / 4u);
+        const uint32_t block_bytes = (fmt == kFmtDXT1) ? 8u : 16u;
+        out_pitch = bx * block_bytes;
+        out_bytes = out_pitch * by;
+    } else {
+        const uint32_t bpp = bytes_per_pixel_for_d3d_fmt(fmt);
+        out_pitch = (rw * bpp + 3u) & ~3u;
+        out_bytes = out_pitch * std::max(1u, rh);
     }
 }
 
@@ -709,6 +940,12 @@ struct D3D9MetalBridge::Impl {
     id<MTLTexture>             dummy_mrt_tex   = nil;
     id<MTLTexture>             depth_tex       = nil;
 
+    static constexpr uint32_t kTransientRingSlots     = 4u;
+    static constexpr size_t   kTransientRingSlotBytes = 2u * 1024u * 1024u;
+    std::array<id<MTLBuffer>, kTransientRingSlots> transient_rings{};
+    uint32_t transient_ring_slot   = 0u;
+    size_t   transient_ring_offset = 0u;
+
     int drawable_width  = 1334;
     int drawable_height = 750;
     uint32_t logical_width  = kGameLogicalWidth;
@@ -719,6 +956,9 @@ struct D3D9MetalBridge::Impl {
     bool in_scene    = false;
     bool guest_presented_this_frame = false;
     bool encoder_rt_dirty = true;
+    uint32_t active_encoder_mrt_count = 0u;
+    bool scissor_valid = false;
+    MTLScissorRect scissor_rect{0, 0, 640, 480};
     uint64_t lru_clock = 1;
     uint64_t draw_calls = 0;
     uint64_t clear_calls = 0;
@@ -814,12 +1054,17 @@ struct D3D9MetalBridge::Impl {
     id<MTLTexture> resolve_surface_texture(const GuestMemory& mem, uint32_t surf_va) {
         SurfaceRecord* s = find_surface_by_va(mem, surf_va);
         if (!s) return nil;
-        if (s->mtl_tex != nil) return s->mtl_tex;
         if (s->parent_tex_id != 0u) {
             auto tit = textures.find(s->parent_tex_id);
-            if (tit != textures.end()) return tit->second.mtl_tex;
+            if (tit != textures.end()) {
+                if (tit->second.mtl_tex != nil) return tit->second.mtl_tex;
+                if (tit->second.cpu_valid && !tit->second.cpu_backup.empty() &&
+                    tit->second.pool != kPoolSystemMem) {
+                    return resolve_stage_texture(mem, tit->second.guest_va);
+                }
+            }
         }
-        return nil;
+        return s->mtl_tex;
     }
 
     TextureRecord* find_texture_by_va(const GuestMemory& mem, uint32_t tex_va) {
@@ -851,25 +1096,67 @@ struct D3D9MetalBridge::Impl {
     }
 
     // -----------------------------------------------------------------------
-    // Metal Texture Creation & 192 MiB LRU Cache Eviction
+    // Metal Texture Creation, Transient Ring Buffer, & 192 MiB LRU Cache Eviction
     // -----------------------------------------------------------------------
     id<MTLTexture> make_mtl_texture(uint32_t w, uint32_t h, MTLPixelFormat fmt, bool is_rt, bool is_ds) {
         if (!device || w == 0u || h == 0u) return nil;
-        MTLTextureDescriptor* desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:fmt
-                                                                                        width:w
-                                                                                       height:h
-                                                                                    mipmapped:NO];
-        if (is_ds) {
-            desc.storageMode = MTLStorageModePrivate;
-            desc.usage       = MTLTextureUsageRenderTarget;
-        } else if (is_rt) {
-            desc.storageMode = MTLStorageModePrivate;
-            desc.usage       = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
-        } else {
-            desc.storageMode = MTLStorageModeShared;
-            desc.usage       = MTLTextureUsageShaderRead;
+        id<MTLTexture> tex = nil;
+        @autoreleasepool {
+            MTLTextureDescriptor* desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:fmt
+                                                                                            width:w
+                                                                                           height:h
+                                                                                        mipmapped:NO];
+            if (is_ds) {
+                desc.storageMode = MTLStorageModePrivate;
+                desc.usage       = MTLTextureUsageRenderTarget;
+            } else if (is_rt) {
+                desc.storageMode = MTLStorageModePrivate;
+                desc.usage       = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+            } else {
+                desc.storageMode = MTLStorageModeShared;
+                desc.usage       = MTLTextureUsageShaderRead;
+            }
+            tex = [device newTextureWithDescriptor:desc];
         }
-        return [device newTextureWithDescriptor:desc];
+        return tex;
+    }
+
+    struct TransientSlice {
+        id<MTLBuffer> buf = nil;
+        NSUInteger offset = 0u;
+    };
+
+    TransientSlice alloc_transient_buffer(const void* data, size_t bytes) {
+        TransientSlice res{};
+        if (!device || !data || bytes == 0u) return res;
+        const size_t aligned = (transient_ring_offset + 15u) & ~size_t(15u);
+        if (bytes <= kTransientRingSlotBytes && aligned + bytes <= kTransientRingSlotBytes) {
+            id<MTLBuffer> ring = transient_rings[transient_ring_slot];
+            if (ring == nil) {
+                @autoreleasepool {
+                    ring = [device newBufferWithLength:kTransientRingSlotBytes
+                                               options:MTLResourceStorageModeShared];
+                }
+                transient_rings[transient_ring_slot] = ring;
+            }
+            if (ring != nil) {
+                std::memcpy(static_cast<uint8_t*>([ring contents]) + aligned, data, bytes);
+                transient_ring_offset = aligned + bytes;
+                res.buf = ring;
+                res.offset = static_cast<NSUInteger>(aligned);
+                return res;
+            }
+        }
+        // Fallback for oversized single-frame submissions
+        id<MTLBuffer> tmp = nil;
+        @autoreleasepool {
+            tmp = [device newBufferWithBytes:data
+                                      length:bytes
+                                     options:MTLResourceStorageModeShared];
+        }
+        res.buf = tmp;
+        res.offset = 0u;
+        return res;
     }
 
     void evict_lru_to_budget(size_t target_bytes) {
@@ -895,15 +1182,17 @@ struct D3D9MetalBridge::Impl {
             return a->last_used_tick < b->last_used_tick;
         });
 
-        for (TextureRecord* rec : candidates) {
-            if (cached_texture_bytes <= target_bytes) break;
-            if (rec->mtl_tex != nil) {
-                rec->mtl_tex = nil;
-                rec->evicted = true;
-                if (cached_texture_bytes >= rec->gpu_bytes) {
-                    cached_texture_bytes -= rec->gpu_bytes;
-                } else {
-                    cached_texture_bytes = 0;
+        @autoreleasepool {
+            for (TextureRecord* rec : candidates) {
+                if (cached_texture_bytes <= target_bytes) break;
+                if (rec->mtl_tex != nil) {
+                    rec->mtl_tex = nil;
+                    rec->evicted = true;
+                    if (cached_texture_bytes >= rec->gpu_bytes) {
+                        cached_texture_bytes -= rec->gpu_bytes;
+                    } else {
+                        cached_texture_bytes = 0;
+                    }
                 }
             }
         }
@@ -913,17 +1202,17 @@ struct D3D9MetalBridge::Impl {
         TextureRecord* rec = find_texture_by_va(mem, tex_va);
         if (!rec) return dummy_black_tex;
         rec->last_used_tick = ++lru_clock;
-        if (rec->mtl_tex == nil && !rec->cpu_backup.empty()) {
-            const MTLPixelFormat mfmt = (rec->format >= kFmtDXT1 && rec->format <= kFmtDXT5)
-                                            ? MTLPixelFormatRGBA8Unorm
-                                            : d3d_fmt_to_mtl(rec->format);
+        if (rec->mtl_tex == nil && rec->cpu_valid && !rec->cpu_backup.empty()) {
+            const MTLPixelFormat mfmt = d3d_fmt_to_mtl(rec->format);
             rec->mtl_tex = make_mtl_texture(rec->width, rec->height, mfmt, false, false);
             if (rec->mtl_tex != nil) {
-                const uint32_t bpp = (mfmt == MTLPixelFormatA8Unorm || mfmt == MTLPixelFormatR8Unorm) ? 1u : 4u;
-                [rec->mtl_tex replaceRegion:MTLRegionMake2D(0, 0, rec->width, rec->height)
-                                mipmapLevel:0
-                                  withBytes:rec->cpu_backup.data()
-                                bytesPerRow:rec->width * bpp];
+                const uint32_t bpp = mtl_bytes_per_pixel(mfmt);
+                @autoreleasepool {
+                    [rec->mtl_tex replaceRegion:MTLRegionMake2D(0, 0, rec->width, rec->height)
+                                    mipmapLevel:0
+                                      withBytes:rec->cpu_backup.data()
+                                    bytesPerRow:rec->width * bpp];
+                }
                 rec->evicted = false;
                 cached_texture_bytes += rec->gpu_bytes;
                 evict_lru_to_budget(kTextureCacheLimitBytes);
@@ -942,65 +1231,71 @@ struct D3D9MetalBridge::Impl {
         }
         if (!device || !shader_lib) return nil;
 
-        const auto& entry = shader_manifest::entry_for_pass_id(static_cast<MbaaShaderPassId>(key.pass_id));
-        NSString* vsName = [NSString stringWithUTF8String:entry.vertex_fn];
-        NSString* psName = [NSString stringWithUTF8String:entry.fragment_fn];
-        id<MTLFunction> vsFn = [shader_lib newFunctionWithName:vsName];
-        id<MTLFunction> psFn = [shader_lib newFunctionWithName:psName];
-        if (!vsFn || !psFn) {
-            ++pso_failures;
-            hle_win32_log("[D3D9MetalBridge] Missing Metal shader function %s / %s",
-                          entry.vertex_fn, entry.fragment_fn);
-            return nil;
-        }
-
-        MTLRenderPipelineDescriptor* desc = [[MTLRenderPipelineDescriptor alloc] init];
-        desc.vertexFunction   = vsFn;
-        desc.fragmentFunction = psFn;
-        if (key.pass_id != MBAA_PASS_PRESENT_BLIT) {
-            desc.vertexDescriptor = vertex_desc;
-        }
-
-        auto configure_attachment = [&](NSUInteger idx, uint32_t fmt_val) {
-            if (fmt_val == 0u) return;
-            MTLRenderPipelineColorAttachmentDescriptor* att = desc.colorAttachments[idx];
-            att.pixelFormat = static_cast<MTLPixelFormat>(fmt_val);
-            if (key.blend_enable && idx == 0u && key.pass_id != MBAA_PASS_PRESENT_BLIT) {
-                att.blendingEnabled             = YES;
-                att.sourceRGBBlendFactor        = d3d_blend_to_mtl(key.src_blend);
-                att.destinationRGBBlendFactor   = d3d_blend_to_mtl(key.dst_blend);
-                att.rgbBlendOperation           = d3d_blendop_to_mtl(key.blend_op);
-                if (key.sep_alpha) {
-                    att.sourceAlphaBlendFactor      = d3d_blend_to_mtl(key.src_alpha);
-                    att.destinationAlphaBlendFactor = d3d_blend_to_mtl(key.dst_alpha);
-                    att.alphaBlendOperation         = d3d_blendop_to_mtl(key.alpha_op);
-                } else {
-                    att.sourceAlphaBlendFactor      = att.sourceRGBBlendFactor;
-                    att.destinationAlphaBlendFactor = att.destinationRGBBlendFactor;
-                    att.alphaBlendOperation         = att.rgbBlendOperation;
-                }
-            } else {
-                att.blendingEnabled = NO;
+        id<MTLRenderPipelineState> pso = nil;
+        @autoreleasepool {
+            const auto& entry = shader_manifest::entry_for_pass_id(static_cast<MbaaShaderPassId>(key.pass_id));
+            NSString* vsName = [NSString stringWithUTF8String:entry.vertex_fn];
+            NSString* psName = [NSString stringWithUTF8String:entry.fragment_fn];
+            id<MTLFunction> vsFn = [shader_lib newFunctionWithName:vsName];
+            id<MTLFunction> psFn = [shader_lib newFunctionWithName:psName];
+            if (!vsFn || !psFn) {
+                ++pso_failures;
+                hle_win32_log("[D3D9MetalBridge] Missing Metal shader function %s / %s",
+                              entry.vertex_fn, entry.fragment_fn);
+                return nil;
             }
-        };
 
-        configure_attachment(0, key.rt_fmt0);
-        if (entry.mrt_count >= 2u) configure_attachment(1, key.rt_fmt1 ? key.rt_fmt1 : static_cast<uint32_t>(MTLPixelFormatBGRA8Unorm));
-        if (entry.mrt_count >= 3u) configure_attachment(2, key.rt_fmt2 ? key.rt_fmt2 : static_cast<uint32_t>(MTLPixelFormatBGRA8Unorm));
-        if (key.has_depth) {
-            desc.depthAttachmentPixelFormat   = MTLPixelFormatDepth32Float_Stencil8;
-            desc.stencilAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
-        }
+            MTLRenderPipelineDescriptor* desc = [[MTLRenderPipelineDescriptor alloc] init];
+            desc.vertexFunction   = vsFn;
+            desc.fragmentFunction = psFn;
+            if (key.pass_id != MBAA_PASS_PRESENT_BLIT) {
+                desc.vertexDescriptor = vertex_desc;
+            }
 
-        NSError* err = nil;
-        id<MTLRenderPipelineState> pso = [device newRenderPipelineStateWithDescriptor:desc error:&err];
-        if (!pso || err) {
-            ++pso_failures;
-            hle_win32_log("[D3D9MetalBridge] PSO build failed for %s: %s",
-                          entry.fragment_fn, err ? err.localizedDescription.UTF8String : "unknown");
-            return nil;
+            auto configure_attachment = [&](NSUInteger idx, uint32_t fmt_val) {
+                if (fmt_val == 0u) return;
+                MTLRenderPipelineColorAttachmentDescriptor* att = desc.colorAttachments[idx];
+                att.pixelFormat = static_cast<MTLPixelFormat>(fmt_val);
+                // DX9 D3DRS_ALPHABLENDENABLE applies uniformly across all MRT color attachments
+                if (key.blend_enable && key.pass_id != MBAA_PASS_PRESENT_BLIT) {
+                    att.blendingEnabled             = YES;
+                    att.sourceRGBBlendFactor        = d3d_blend_to_mtl(key.src_blend);
+                    att.destinationRGBBlendFactor   = d3d_blend_to_mtl(key.dst_blend);
+                    att.rgbBlendOperation           = d3d_blendop_to_mtl(key.blend_op);
+                    if (key.sep_alpha) {
+                        att.sourceAlphaBlendFactor      = d3d_blend_to_mtl(key.src_alpha);
+                        att.destinationAlphaBlendFactor = d3d_blend_to_mtl(key.dst_alpha);
+                        att.alphaBlendOperation         = d3d_blendop_to_mtl(key.alpha_op);
+                    } else {
+                        att.sourceAlphaBlendFactor      = att.sourceRGBBlendFactor;
+                        att.destinationAlphaBlendFactor = att.destinationRGBBlendFactor;
+                        att.alphaBlendOperation         = att.rgbBlendOperation;
+                    }
+                } else {
+                    att.blendingEnabled = NO;
+                }
+            };
+
+            configure_attachment(0, key.rt_fmt0);
+            if (entry.mrt_count >= 2u) configure_attachment(1, key.rt_fmt1 ? key.rt_fmt1 : static_cast<uint32_t>(MTLPixelFormatBGRA8Unorm));
+            if (entry.mrt_count >= 3u) configure_attachment(2, key.rt_fmt2 ? key.rt_fmt2 : static_cast<uint32_t>(MTLPixelFormatBGRA8Unorm));
+            if (key.has_depth) {
+                desc.depthAttachmentPixelFormat   = MTLPixelFormatDepth32Float_Stencil8;
+                desc.stencilAttachmentPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+            }
+
+            NSError* err = nil;
+            pso = [device newRenderPipelineStateWithDescriptor:desc error:&err];
+            if (!pso || err) {
+                ++pso_failures;
+                hle_win32_log("[D3D9MetalBridge] PSO build failed for %s: %s",
+                              entry.fragment_fn, err ? err.localizedDescription.UTF8String : "unknown");
+                pso = nil;
+            }
         }
-        pipeline_cache[key] = pso;
+        if (pso != nil) {
+            pipeline_cache[key] = pso;
+        }
         return pso;
     }
 
@@ -1010,14 +1305,19 @@ struct D3D9MetalBridge::Impl {
         if (it != sampler_cache.end()) return it->second;
         if (!device) return nil;
 
-        MTLSamplerDescriptor* desc = [[MTLSamplerDescriptor alloc] init];
-        desc.sAddressMode = d3d_addr_to_mtl(s.address_u);
-        desc.tAddressMode = d3d_addr_to_mtl(s.address_v);
-        desc.magFilter    = (s.mag_filter >= 2u) ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
-        desc.minFilter    = (s.min_filter >= 2u) ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
-        desc.mipFilter    = MTLSamplerMipFilterNotMipmapped;
-        id<MTLSamplerState> samp = [device newSamplerStateWithDescriptor:desc];
-        sampler_cache[k] = samp;
+        id<MTLSamplerState> samp = nil;
+        @autoreleasepool {
+            MTLSamplerDescriptor* desc = [[MTLSamplerDescriptor alloc] init];
+            desc.sAddressMode = d3d_addr_to_mtl(s.address_u);
+            desc.tAddressMode = d3d_addr_to_mtl(s.address_v);
+            desc.magFilter    = (s.mag_filter >= 2u) ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
+            desc.minFilter    = (s.min_filter >= 2u) ? MTLSamplerMinMagFilterLinear : MTLSamplerMinMagFilterNearest;
+            desc.mipFilter    = MTLSamplerMipFilterNotMipmapped;
+            samp = [device newSamplerStateWithDescriptor:desc];
+        }
+        if (samp != nil) {
+            sampler_cache[k] = samp;
+        }
         return samp;
     }
 
@@ -1026,14 +1326,19 @@ struct D3D9MetalBridge::Impl {
     // -----------------------------------------------------------------------
     void end_active_encoder() {
         if (active_encoder != nil) {
-            [active_encoder endEncoding];
-            active_encoder = nil;
+            @autoreleasepool {
+                [active_encoder endEncoding];
+                active_encoder = nil;
+            }
         }
+        active_encoder_mrt_count = 0u;
     }
 
     id<MTLCommandBuffer> ensure_cmd_buffer() {
         if (frame_cmd_buf == nil && cmd_queue != nil) {
-            frame_cmd_buf = [cmd_queue commandBuffer];
+            @autoreleasepool {
+                frame_cmd_buf = [cmd_queue commandBuffer];
+            }
         }
         return frame_cmd_buf;
     }
@@ -1042,21 +1347,46 @@ struct D3D9MetalBridge::Impl {
         if (rt_index >= bound_rt_surfaces.size()) return nil;
         const uint32_t surf_va = bound_rt_surfaces[rt_index];
         if (surf_va == 0u) return nil;
-        SurfaceRecord* s = find_surface_by_va(mem, surf_va);
-        if (!s) return nil;
-        if (s->mtl_tex != nil) return s->mtl_tex;
-        if (s->parent_tex_id != 0u) {
-            auto tit = textures.find(s->parent_tex_id);
-            if (tit != textures.end()) return tit->second.mtl_tex;
+        return resolve_surface_texture(mem, surf_va);
+    }
+
+    id<MTLTexture> resolve_active_depth_texture(const GuestMemory& mem, id<MTLTexture> rt0) {
+        if (bound_ds_surface == 0u || rt0 == nil) return nil;
+        id<MTLTexture> ds_tex = resolve_surface_texture(mem, bound_ds_surface);
+        if (ds_tex == nil) ds_tex = depth_tex;
+        if (ds_tex != nil && ds_tex.width == rt0.width && ds_tex.height == rt0.height) {
+            return ds_tex;
         }
         return nil;
     }
 
-    id<MTLRenderCommandEncoder> ensure_render_encoder(const GuestMemory& mem, uint32_t mrt_count, bool clear_color = false, uint32_t clear_argb = 0u, bool clear_depth = false) {
+    void apply_encoder_scissor(id<MTLRenderCommandEncoder> enc, uint32_t rtw, uint32_t rth) {
+        if (enc == nil || rtw == 0u || rth == 0u) return;
+        if (render_states[kRsScissorTestEnable] && scissor_valid) {
+            const NSUInteger sx = std::min<NSUInteger>(scissor_rect.x, rtw - 1u);
+            const NSUInteger sy = std::min<NSUInteger>(scissor_rect.y, rth - 1u);
+            const NSUInteger sw = std::max<NSUInteger>(1u, std::min<NSUInteger>(scissor_rect.width, rtw - sx));
+            const NSUInteger sh = std::max<NSUInteger>(1u, std::min<NSUInteger>(scissor_rect.height, rth - sy));
+            [enc setScissorRect:MTLScissorRect{sx, sy, sw, sh}];
+        } else {
+            [enc setScissorRect:MTLScissorRect{0u, 0u, rtw, rth}];
+        }
+    }
+
+    id<MTLRenderCommandEncoder> ensure_render_encoder(
+        const GuestMemory& mem,
+        uint32_t mrt_count,
+        bool clear_color = false,
+        uint32_t clear_argb = 0u,
+        bool clear_depth = false,
+        double clear_z = 1.0,
+        uint32_t clear_stencil = 0u)
+    {
         id<MTLCommandBuffer> cb = ensure_cmd_buffer();
         if (!cb) return nil;
 
-        if (active_encoder != nil && !encoder_rt_dirty && !clear_color && !clear_depth) {
+        if (active_encoder != nil && !encoder_rt_dirty && !clear_color && !clear_depth &&
+            active_encoder_mrt_count == mrt_count) {
             return active_encoder;
         }
         end_active_encoder();
@@ -1064,51 +1394,62 @@ struct D3D9MetalBridge::Impl {
         id<MTLTexture> rt0 = resolve_rt_texture(mem, 0u);
         if (!rt0) return nil;
 
-        MTLRenderPassDescriptor* rpd = [MTLRenderPassDescriptor renderPassDescriptor];
-        auto setup_rt = [&](NSUInteger idx, id<MTLTexture> tex, bool do_clear) {
-            rpd.colorAttachments[idx].texture    = tex;
-            rpd.colorAttachments[idx].loadAction = do_clear ? MTLLoadActionClear : MTLLoadActionLoad;
-            rpd.colorAttachments[idx].storeAction = MTLStoreActionStore;
-            if (do_clear) {
-                mbaa_float4 cf{};
-                argb_u32_to_float4(clear_argb, cf);
-                rpd.colorAttachments[idx].clearColor = MTLClearColorMake(cf.x, cf.y, cf.z, cf.w);
-            }
-        };
-
-        setup_rt(0, rt0, clear_color);
-        if (mrt_count >= 2u) {
-            id<MTLTexture> rt1 = resolve_rt_texture(mem, 1u);
-            setup_rt(1, rt1 ? rt1 : dummy_mrt_tex, false);
-        }
-        if (mrt_count >= 3u) {
-            id<MTLTexture> rt2 = resolve_rt_texture(mem, 2u);
-            setup_rt(2, rt2 ? rt2 : dummy_mrt_tex, false);
-        }
-
-        if (bound_ds_surface != 0u && depth_tex != nil &&
-            depth_tex.width == rt0.width && depth_tex.height == rt0.height) {
-            rpd.depthAttachment.texture     = depth_tex;
-            rpd.depthAttachment.loadAction  = clear_depth ? MTLLoadActionClear : MTLLoadActionLoad;
-            rpd.depthAttachment.storeAction = MTLStoreActionStore;
-            rpd.depthAttachment.clearDepth  = 1.0;
-            rpd.stencilAttachment.texture     = depth_tex;
-            rpd.stencilAttachment.loadAction  = clear_depth ? MTLLoadActionClear : MTLLoadActionLoad;
-            rpd.stencilAttachment.storeAction = MTLStoreActionStore;
-        }
-
-        active_encoder = [cb renderCommandEncoderWithDescriptor:rpd];
-        encoder_rt_dirty = false;
-
-        if (active_encoder != nil) {
-            MTLViewport mvp{
-                static_cast<double>(vp_x),
-                static_cast<double>(vp_y),
-                static_cast<double>(std::min<uint32_t>(vp_w, static_cast<uint32_t>(rt0.width))),
-                static_cast<double>(std::min<uint32_t>(vp_h, static_cast<uint32_t>(rt0.height))),
-                0.0, 1.0
+        @autoreleasepool {
+            MTLRenderPassDescriptor* rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+            auto setup_rt = [&](NSUInteger idx, id<MTLTexture> tex, bool do_clear) {
+                rpd.colorAttachments[idx].texture     = tex;
+                rpd.colorAttachments[idx].loadAction  = do_clear ? MTLLoadActionClear : MTLLoadActionLoad;
+                rpd.colorAttachments[idx].storeAction = MTLStoreActionStore;
+                if (do_clear) {
+                    mbaa_float4 cf{};
+                    argb_u32_to_float4(clear_argb, cf);
+                    rpd.colorAttachments[idx].clearColor = MTLClearColorMake(cf.x, cf.y, cf.z, cf.w);
+                }
             };
-            [active_encoder setViewport:mvp];
+
+            setup_rt(0, rt0, clear_color);
+            if (mrt_count >= 2u) {
+                id<MTLTexture> rt1 = resolve_rt_texture(mem, 1u);
+                setup_rt(1, rt1 ? rt1 : dummy_mrt_tex, clear_color && (rt1 != nil));
+            }
+            if (mrt_count >= 3u) {
+                id<MTLTexture> rt2 = resolve_rt_texture(mem, 2u);
+                setup_rt(2, rt2 ? rt2 : dummy_mrt_tex, clear_color && (rt2 != nil));
+            }
+
+            id<MTLTexture> ds_tex = resolve_active_depth_texture(mem, rt0);
+            if (ds_tex != nil) {
+                rpd.depthAttachment.texture       = ds_tex;
+                rpd.depthAttachment.loadAction    = clear_depth ? MTLLoadActionClear : MTLLoadActionLoad;
+                rpd.depthAttachment.storeAction   = MTLStoreActionStore;
+                rpd.depthAttachment.clearDepth    = clear_z;
+                rpd.stencilAttachment.texture     = ds_tex;
+                rpd.stencilAttachment.loadAction  = clear_depth ? MTLLoadActionClear : MTLLoadActionLoad;
+                rpd.stencilAttachment.storeAction = MTLStoreActionStore;
+                rpd.stencilAttachment.clearStencil = clear_stencil;
+            }
+
+            active_encoder = [cb renderCommandEncoderWithDescriptor:rpd];
+            encoder_rt_dirty = false;
+            active_encoder_mrt_count = (active_encoder != nil) ? mrt_count : 0u;
+
+            if (active_encoder != nil) {
+                const uint32_t rtw = static_cast<uint32_t>(rt0.width);
+                const uint32_t rth = static_cast<uint32_t>(rt0.height);
+                const uint32_t vx  = std::min<uint32_t>(vp_x, rtw > 0u ? rtw - 1u : 0u);
+                const uint32_t vy  = std::min<uint32_t>(vp_y, rth > 0u ? rth - 1u : 0u);
+                const uint32_t vw  = std::max<uint32_t>(1u, std::min<uint32_t>(vp_w ? vp_w : rtw, rtw - vx));
+                const uint32_t vh  = std::max<uint32_t>(1u, std::min<uint32_t>(vp_h ? vp_h : rth, rth - vy));
+                MTLViewport mvp{
+                    static_cast<double>(vx),
+                    static_cast<double>(vy),
+                    static_cast<double>(vw),
+                    static_cast<double>(vh),
+                    0.0, 1.0
+                };
+                [active_encoder setViewport:mvp];
+                apply_encoder_scissor(active_encoder, rtw, rth);
+            }
         }
         return active_encoder;
     }
@@ -1128,257 +1469,261 @@ struct D3D9MetalBridge::Impl {
     {
         if (!vdata || prim_count == 0u || vcount == 0u) return;
 
-        // Determine active pass & effect parameters
-        MbaaShaderPassId pass_id = MBAA_PASS_FIXED_2D;
-        EffectRecord* fx = nullptr;
-        if (active_effect_id != 0u) {
-            auto eit = effects.find(active_effect_id);
-            if (eit != effects.end() && eit->second.in_effect) {
-                fx = &eit->second;
-                if (const auto* e = shader_manifest::find_technique_pass(
-                        fx->active_tech_name.c_str(), fx->active_pass_index)) {
-                    pass_id = e->pass_id;
+        @autoreleasepool {
+            // Determine active pass & effect parameters
+            MbaaShaderPassId pass_id = MBAA_PASS_FIXED_2D;
+            EffectRecord* fx = nullptr;
+            if (active_effect_id != 0u) {
+                auto eit = effects.find(active_effect_id);
+                if (eit != effects.end() && eit->second.in_effect) {
+                    fx = &eit->second;
+                    if (const auto* e = shader_manifest::find_technique_pass(
+                            fx->active_tech_name.c_str(), fx->active_pass_index)) {
+                        pass_id = e->pass_id;
+                    }
                 }
             }
-        }
 
-        const auto& pass_entry = shader_manifest::entry_for_pass_id(pass_id);
-        id<MTLRenderCommandEncoder> enc = ensure_render_encoder(mem, pass_entry.mrt_count);
-        if (!enc) {
-            ++draw_dropped_no_enc;
-            return;
-        }
-
-        // Decode FVF vertices into unified MbaaMetalVertex buffer
-        const bool has_rhw      = (current_fvf & kFvfXyzRhw) != 0u;
-        const bool has_xyz      = (current_fvf & kFvfXyz) != 0u;
-        const bool has_normal   = (current_fvf & kFvfNormal) != 0u;
-        const bool has_diffuse  = (current_fvf & kFvfDiffuse) != 0u;
-        const bool has_specular = (current_fvf & kFvfSpecular) != 0u;
-        const uint32_t tex_cnt  = (current_fvf & kFvfTexMask) >> 8;
-
-        // Compute fallback stride if caller didn't provide one
-        uint32_t stride = vstride;
-        if (stride == 0u) {
-            stride = (has_rhw ? 16u : (has_xyz ? 12u : 12u)) +
-                     (has_normal ? 12u : 0u) +
-                     (has_diffuse ? 4u : 0u) +
-                     (has_specular ? 4u : 0u) +
-                     tex_cnt * 8u;
-        }
-
-        std::vector<MbaaMetalVertex> verts(vcount);
-        for (uint32_t i = 0; i < vcount; ++i) {
-            const uint8_t* p = vdata + static_cast<size_t>(i) * stride;
-            MbaaMetalVertex& dst = verts[i];
-            size_t off = 0u;
-
-            if (has_rhw) {
-                float xyzw[4]{};
-                std::memcpy(xyzw, p + off, 16u);
-                dst.position = {xyzw[0], xyzw[1], xyzw[2], xyzw[3]};
-                off += 16u;
-            } else {
-                float xyz[3]{};
-                std::memcpy(xyz, p + off, 12u);
-                dst.position = {xyz[0], xyz[1], xyz[2], 1.0f};
-                off += 12u;
+            const auto& pass_entry = shader_manifest::entry_for_pass_id(pass_id);
+            id<MTLRenderCommandEncoder> enc = ensure_render_encoder(mem, pass_entry.mrt_count);
+            if (!enc) {
+                ++draw_dropped_no_enc;
+                return;
             }
-            if (has_normal) {
-                off += 12u;
-            }
-            if (has_diffuse) {
-                argb_u32_to_float4(read_u32_le_buf(p + off), dst.diffuse);
-                off += 4u;
-            } else {
-                dst.diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
-            }
-            if (has_specular) {
-                argb_u32_to_float4(read_u32_le_buf(p + off), dst.specular);
-                off += 4u;
-            } else {
-                dst.specular = {0.0f, 0.0f, 0.0f, 0.0f};
-            }
-            if (tex_cnt >= 1u && off + 8u <= stride) {
-                float uv0[2]{};
-                std::memcpy(uv0, p + off, 8u);
-                dst.texcoord0 = {uv0[0], uv0[1]};
-                off += 8u;
-            } else {
-                dst.texcoord0 = {0.0f, 0.0f};
-            }
-            if (tex_cnt >= 2u && off + 8u <= stride) {
-                float uv1[2]{};
-                std::memcpy(uv1, p + off, 8u);
-                dst.texcoord1 = {uv1[0], uv1[1]};
-            } else {
-                dst.texcoord1 = dst.texcoord0;
-            }
-        }
 
-        // Convert D3D9 primitive/index topology to Metal
-        MTLPrimitiveType mtl_prim = MTLPrimitiveTypeTriangle;
-        std::vector<uint32_t> expanded_indices;
-        const uint32_t* draw_indices = nullptr;
-        uint32_t draw_index_count = 0u;
+            // Decode FVF vertices into unified MbaaMetalVertex buffer
+            const bool has_rhw      = (current_fvf & kFvfXyzRhw) != 0u;
+            const bool has_xyz      = (current_fvf & kFvfXyz) != 0u;
+            const bool has_normal   = (current_fvf & kFvfNormal) != 0u;
+            const bool has_diffuse  = (current_fvf & kFvfDiffuse) != 0u;
+            const bool has_specular = (current_fvf & kFvfSpecular) != 0u;
+            const uint32_t tex_cnt  = (current_fvf & kFvfTexMask) >> 8;
 
-        auto read_idx = [&](uint32_t k) -> uint32_t {
-            if (!idata) return std::min<uint32_t>(k, vcount - 1u);
-            const uint32_t raw_idx = (index_fmt == 101u)
-                ? read_u16_le_buf(idata + k * 2u)
-                : read_u32_le_buf(idata + k * 4u);
-            return std::min<uint32_t>(raw_idx, vcount - 1u);
-        };
+            // Compute fallback stride if caller didn't provide one
+            uint32_t stride = vstride;
+            if (stride == 0u) {
+                stride = (has_rhw ? 16u : (has_xyz ? 12u : 12u)) +
+                         (has_normal ? 12u : 0u) +
+                         (has_diffuse ? 4u : 0u) +
+                         (has_specular ? 4u : 0u) +
+                         tex_cnt * 8u;
+            }
 
-        switch (prim_type) {
-            case kPtPointList:
-                mtl_prim = MTLPrimitiveTypePoint;
-                draw_index_count = prim_count;
-                break;
-            case kPtLineList:
-                mtl_prim = MTLPrimitiveTypeLine;
-                draw_index_count = prim_count * 2u;
-                break;
-            case kPtLineStrip:
-                mtl_prim = MTLPrimitiveTypeLineStrip;
-                draw_index_count = prim_count + 1u;
-                break;
-            case kPtTriangleStrip:
-                mtl_prim = MTLPrimitiveTypeTriangleStrip;
-                draw_index_count = prim_count + 2u;
-                break;
-            case kPtTriangleFan:
-                mtl_prim = MTLPrimitiveTypeTriangle;
-                expanded_indices.resize(prim_count * 3u);
-                for (uint32_t t = 0; t < prim_count; ++t) {
-                    expanded_indices[t * 3u + 0u] = read_idx(0u);
-                    expanded_indices[t * 3u + 1u] = read_idx(t + 1u);
-                    expanded_indices[t * 3u + 2u] = read_idx(t + 2u);
+            std::vector<MbaaMetalVertex> verts(vcount);
+            for (uint32_t i = 0; i < vcount; ++i) {
+                const uint8_t* p = vdata + static_cast<size_t>(i) * stride;
+                MbaaMetalVertex& dst = verts[i];
+                size_t off = 0u;
+
+                if (has_rhw) {
+                    float xyzw[4]{};
+                    std::memcpy(xyzw, p + off, 16u);
+                    dst.position = {xyzw[0], xyzw[1], xyzw[2], xyzw[3]};
+                    off += 16u;
+                } else {
+                    float xyz[3]{};
+                    std::memcpy(xyz, p + off, 12u);
+                    dst.position = {xyz[0], xyz[1], xyz[2], 1.0f};
+                    off += 12u;
+                }
+                if (has_normal) {
+                    off += 12u;
+                }
+                if (has_diffuse) {
+                    argb_u32_to_float4(read_u32_le_buf(p + off), dst.diffuse);
+                    off += 4u;
+                } else {
+                    dst.diffuse = {1.0f, 1.0f, 1.0f, 1.0f};
+                }
+                if (has_specular) {
+                    argb_u32_to_float4(read_u32_le_buf(p + off), dst.specular);
+                    off += 4u;
+                } else {
+                    dst.specular = {0.0f, 0.0f, 0.0f, 0.0f};
+                }
+                if (tex_cnt >= 1u && off + 8u <= stride) {
+                    float uv0[2]{};
+                    std::memcpy(uv0, p + off, 8u);
+                    dst.texcoord0 = {uv0[0], uv0[1]};
+                    off += 8u;
+                } else {
+                    dst.texcoord0 = {0.0f, 0.0f};
+                }
+                if (tex_cnt >= 2u && off + 8u <= stride) {
+                    float uv1[2]{};
+                    std::memcpy(uv1, p + off, 8u);
+                    dst.texcoord1 = {uv1[0], uv1[1]};
+                } else {
+                    dst.texcoord1 = dst.texcoord0;
+                }
+            }
+
+            // Convert D3D9 primitive/index topology to Metal
+            MTLPrimitiveType mtl_prim = MTLPrimitiveTypeTriangle;
+            std::vector<uint32_t> expanded_indices;
+            const uint32_t* draw_indices = nullptr;
+            uint32_t draw_index_count = 0u;
+
+            auto read_idx = [&](uint32_t k) -> uint32_t {
+                if (!idata) return std::min<uint32_t>(k, vcount - 1u);
+                const uint32_t raw_idx = (index_fmt == 101u)
+                    ? read_u16_le_buf(idata + k * 2u)
+                    : read_u32_le_buf(idata + k * 4u);
+                return std::min<uint32_t>(raw_idx, vcount - 1u);
+            };
+
+            switch (prim_type) {
+                case kPtPointList:
+                    mtl_prim = MTLPrimitiveTypePoint;
+                    draw_index_count = prim_count;
+                    break;
+                case kPtLineList:
+                    mtl_prim = MTLPrimitiveTypeLine;
+                    draw_index_count = prim_count * 2u;
+                    break;
+                case kPtLineStrip:
+                    mtl_prim = MTLPrimitiveTypeLineStrip;
+                    draw_index_count = prim_count + 1u;
+                    break;
+                case kPtTriangleStrip:
+                    mtl_prim = MTLPrimitiveTypeTriangleStrip;
+                    draw_index_count = prim_count + 2u;
+                    break;
+                case kPtTriangleFan:
+                    mtl_prim = MTLPrimitiveTypeTriangle;
+                    expanded_indices.resize(prim_count * 3u);
+                    for (uint32_t t = 0; t < prim_count; ++t) {
+                        expanded_indices[t * 3u + 0u] = read_idx(0u);
+                        expanded_indices[t * 3u + 1u] = read_idx(t + 1u);
+                        expanded_indices[t * 3u + 2u] = read_idx(t + 2u);
+                    }
+                    draw_indices = expanded_indices.data();
+                    draw_index_count = prim_count * 3u;
+                    break;
+                case kPtTriangleList:
+                default:
+                    mtl_prim = MTLPrimitiveTypeTriangle;
+                    draw_index_count = prim_count * 3u;
+                    break;
+            }
+
+            if (draw_indices == nullptr && idata != nullptr) {
+                expanded_indices.resize(draw_index_count);
+                for (uint32_t k = 0; k < draw_index_count; ++k) {
+                    expanded_indices[k] = read_idx(k);
                 }
                 draw_indices = expanded_indices.data();
-                draw_index_count = prim_count * 3u;
-                break;
-            case kPtTriangleList:
-            default:
-                mtl_prim = MTLPrimitiveTypeTriangle;
-                draw_index_count = prim_count * 3u;
-                break;
-        }
-
-        if (draw_indices == nullptr && idata != nullptr) {
-            expanded_indices.resize(draw_index_count);
-            for (uint32_t k = 0; k < draw_index_count; ++k) {
-                expanded_indices[k] = read_idx(k);
             }
-            draw_indices = expanded_indices.data();
-        }
 
-        // Resolve PSO
-        id<MTLTexture> rt0 = resolve_rt_texture(mem, 0u);
-        id<MTLTexture> rt1 = (pass_entry.mrt_count >= 2u) ? resolve_rt_texture(mem, 1u) : nil;
-        id<MTLTexture> rt2 = (pass_entry.mrt_count >= 3u) ? resolve_rt_texture(mem, 2u) : nil;
+            // Resolve PSO
+            id<MTLTexture> rt0 = resolve_rt_texture(mem, 0u);
+            id<MTLTexture> rt1 = (pass_entry.mrt_count >= 2u) ? resolve_rt_texture(mem, 1u) : nil;
+            id<MTLTexture> rt2 = (pass_entry.mrt_count >= 3u) ? resolve_rt_texture(mem, 2u) : nil;
+            id<MTLTexture> ds_tex = resolve_active_depth_texture(mem, rt0);
 
-        uint32_t src_b = render_states[kRsSrcBlend] ? render_states[kRsSrcBlend] : 5u;
-        uint32_t dst_b = render_states[kRsDestBlend] ? render_states[kRsDestBlend] : 6u;
-        if (src_b == 12u) { // D3DBLEND_BOTHSRCALPHA
-            src_b = 5u;
-            dst_b = 6u;
-        } else if (src_b == 13u) { // D3DBLEND_BOTHINVSRCALPHA
-            src_b = 6u;
-            dst_b = 5u;
-        }
+            uint32_t src_b = render_states[kRsSrcBlend] ? render_states[kRsSrcBlend] : 5u;
+            uint32_t dst_b = render_states[kRsDestBlend] ? render_states[kRsDestBlend] : 6u;
+            if (src_b == 12u) { // D3DBLEND_BOTHSRCALPHA
+                src_b = 5u;
+                dst_b = 6u;
+            } else if (src_b == 13u) { // D3DBLEND_BOTHINVSRCALPHA
+                src_b = 6u;
+                dst_b = 5u;
+            }
 
-        PipelineCacheKey pkey{};
-        pkey.pass_id      = static_cast<uint32_t>(pass_id);
-        pkey.rt_fmt0      = rt0 ? static_cast<uint32_t>(rt0.pixelFormat) : static_cast<uint32_t>(MTLPixelFormatBGRA8Unorm);
-        pkey.rt_fmt1      = rt1 ? static_cast<uint32_t>(rt1.pixelFormat) : static_cast<uint32_t>(MTLPixelFormatBGRA8Unorm);
-        pkey.rt_fmt2      = rt2 ? static_cast<uint32_t>(rt2.pixelFormat) : static_cast<uint32_t>(MTLPixelFormatBGRA8Unorm);
-        pkey.has_depth    = (bound_ds_surface != 0u && depth_tex != nil &&
-                             rt0 != nil && depth_tex.width == rt0.width && depth_tex.height == rt0.height) ? 1u : 0u;
-        pkey.blend_enable = render_states[kRsAlphaBlendEnable] ? 1u : 0u;
-        pkey.src_blend    = static_cast<uint8_t>(src_b);
-        pkey.dst_blend    = static_cast<uint8_t>(dst_b);
-        pkey.blend_op     = static_cast<uint8_t>(render_states[kRsBlendOp] ? render_states[kRsBlendOp] : 1u);
-        pkey.sep_alpha    = render_states[kRsSeparateAlphaBlendEnable] ? 1u : 0u;
-        pkey.src_alpha    = static_cast<uint8_t>(render_states[kRsSrcBlendAlpha] ? render_states[kRsSrcBlendAlpha] : 2u);
-        pkey.dst_alpha    = static_cast<uint8_t>(render_states[kRsDestBlendAlpha] ? render_states[kRsDestBlendAlpha] : 1u);
-        pkey.alpha_op     = static_cast<uint8_t>(render_states[kRsBlendOpAlpha] ? render_states[kRsBlendOpAlpha] : 1u);
+            PipelineCacheKey pkey{};
+            pkey.pass_id      = static_cast<uint32_t>(pass_id);
+            pkey.rt_fmt0      = rt0 ? static_cast<uint32_t>(rt0.pixelFormat) : static_cast<uint32_t>(MTLPixelFormatBGRA8Unorm);
+            pkey.rt_fmt1      = rt1 ? static_cast<uint32_t>(rt1.pixelFormat) : static_cast<uint32_t>(MTLPixelFormatBGRA8Unorm);
+            pkey.rt_fmt2      = rt2 ? static_cast<uint32_t>(rt2.pixelFormat) : static_cast<uint32_t>(MTLPixelFormatBGRA8Unorm);
+            pkey.has_depth    = (ds_tex != nil) ? 1u : 0u;
+            pkey.blend_enable = render_states[kRsAlphaBlendEnable] ? 1u : 0u;
+            pkey.src_blend    = static_cast<uint8_t>(src_b);
+            pkey.dst_blend    = static_cast<uint8_t>(dst_b);
+            pkey.blend_op     = static_cast<uint8_t>(render_states[kRsBlendOp] ? render_states[kRsBlendOp] : 1u);
+            pkey.sep_alpha    = render_states[kRsSeparateAlphaBlendEnable] ? 1u : 0u;
+            pkey.src_alpha    = static_cast<uint8_t>(render_states[kRsSrcBlendAlpha] ? render_states[kRsSrcBlendAlpha] : 2u);
+            pkey.dst_alpha    = static_cast<uint8_t>(render_states[kRsDestBlendAlpha] ? render_states[kRsDestBlendAlpha] : 1u);
+            pkey.alpha_op     = static_cast<uint8_t>(render_states[kRsBlendOpAlpha] ? render_states[kRsBlendOpAlpha] : 1u);
 
-        id<MTLRenderPipelineState> pso = get_pipeline(pkey);
-        if (!pso) {
-            ++draw_dropped_no_pso;
-            return;
-        }
+            id<MTLRenderPipelineState> pso = get_pipeline(pkey);
+            if (!pso) {
+                ++draw_dropped_no_pso;
+                return;
+            }
 
-        [enc setRenderPipelineState:pso];
-        if (pkey.has_depth) {
-            [enc setDepthStencilState:(render_states[kRsZEnable] ? depth_enabled : depth_disabled)];
-        }
-        [enc setCullMode:MTLCullModeNone]; // 2D sprite quads in MBAACC can flip UVs/X via negative scale
+            [enc setRenderPipelineState:pso];
+            if (pkey.has_depth) {
+                [enc setDepthStencilState:(render_states[kRsZEnable] ? depth_enabled : depth_disabled)];
+            }
+            [enc setCullMode:MTLCullModeNone]; // 2D sprite quads in MBAACC can flip UVs/X via negative scale
 
-        // Populate MbaaDrawUniforms
-        MbaaDrawUniforms du{};
-        const auto wvp = mul_matrix(mul_matrix(mat_world, mat_view), mat_proj);
-        for (int row = 0; row < 4; ++row) {
-            // Transpose columns into row-major dot products so row-vector v * (W*V*P) matches D3D9!
-            du.world_view_proj[row] = {
-                wvp[static_cast<size_t>(0 * 4 + row)],
-                wvp[static_cast<size_t>(1 * 4 + row)],
-                wvp[static_cast<size_t>(2 * 4 + row)],
-                wvp[static_cast<size_t>(3 * 4 + row)]
-            };
-        }
-        const float rtw = rt0 ? static_cast<float>(rt0.width)  : 640.0f;
-        const float rth = rt0 ? static_cast<float>(rt0.height) : 480.0f;
-        const float use_w = (vp_w > 0u) ? static_cast<float>(vp_w) : rtw;
-        const float use_h = (vp_h > 0u) ? static_cast<float>(vp_h) : rth;
-        du.viewport_inv      = {2.0f / use_w, 2.0f / use_h, static_cast<float>(vp_x), static_cast<float>(vp_y)};
-        du.is_transformed    = has_rhw ? 1u : 0u;
-        du.has_texture       = (bound_textures[0] != 0u) ? 1u : 0u;
-        du.alpha_test_enable = render_states[kRsAlphaTestEnable];
-        du.alpha_func        = render_states[kRsAlphaFunc] ? render_states[kRsAlphaFunc] : 8u;
-        du.alpha_ref         = static_cast<float>(render_states[kRsAlphaRef] & 0xFFu) * (1.0f / 255.0f);
-        du.color_op0         = tss_stage0_colorop[0] ? tss_stage0_colorop[0] : 4u;
-        du.alpha_op0         = tss_stage0_alphaop[0] ? tss_stage0_alphaop[0] : 4u;
-        argb_u32_to_float4(render_states[kRsTextureFactor], du.texture_factor);
+            // Populate MbaaDrawUniforms
+            MbaaDrawUniforms du{};
+            const auto wvp = mul_matrix(mul_matrix(mat_world, mat_view), mat_proj);
+            for (int row = 0; row < 4; ++row) {
+                // Transpose columns into row-major dot products so row-vector v * (W*V*P) matches D3D9!
+                du.world_view_proj[row] = {
+                    wvp[static_cast<size_t>(0 * 4 + row)],
+                    wvp[static_cast<size_t>(1 * 4 + row)],
+                    wvp[static_cast<size_t>(2 * 4 + row)],
+                    wvp[static_cast<size_t>(3 * 4 + row)]
+                };
+            }
+            const float rtw = rt0 ? static_cast<float>(rt0.width)  : 640.0f;
+            const float rth = rt0 ? static_cast<float>(rt0.height) : 480.0f;
+            const float use_w = (vp_w > 0u) ? static_cast<float>(vp_w) : rtw;
+            const float use_h = (vp_h > 0u) ? static_cast<float>(vp_h) : rth;
+            du.viewport_inv      = {2.0f / use_w, 2.0f / use_h, static_cast<float>(vp_x), static_cast<float>(vp_y)};
+            du.is_transformed    = has_rhw ? 1u : 0u;
+            du.has_texture       = (bound_textures[0] != 0u) ? 1u : 0u;
+            du.alpha_test_enable = render_states[kRsAlphaTestEnable];
+            du.alpha_func        = render_states[kRsAlphaFunc] ? render_states[kRsAlphaFunc] : 8u;
+            du.alpha_ref         = static_cast<float>(render_states[kRsAlphaRef] & 0xFFu) * (1.0f / 255.0f);
+            du.color_op0         = tss_stage0_colorop[0] ? tss_stage0_colorop[0] : 4u;
+            du.alpha_op0         = tss_stage0_alphaop[0] ? tss_stage0_alphaop[0] : 4u;
+            argb_u32_to_float4(render_states[kRsTextureFactor], du.texture_factor);
 
-        const size_t vbytes = verts.size() * sizeof(MbaaMetalVertex);
-        if (vbytes <= 4096u) {
-            [enc setVertexBytes:verts.data() length:vbytes atIndex:MBAA_BUF_VERTICES];
-        } else {
-            id<MTLBuffer> vbuf = [device newBufferWithBytes:verts.data()
-                                                     length:vbytes
-                                                    options:MTLResourceStorageModeShared];
-            [enc setVertexBuffer:vbuf offset:0 atIndex:MBAA_BUF_VERTICES];
-        }
-        [enc setVertexBytes:&du length:sizeof(du) atIndex:MBAA_BUF_DRAW_UNIFORMS];
-        [enc setFragmentBytes:&du length:sizeof(du) atIndex:MBAA_BUF_DRAW_UNIFORMS];
+            const size_t vbytes = verts.size() * sizeof(MbaaMetalVertex);
+            if (vbytes <= 4096u) {
+                [enc setVertexBytes:verts.data() length:vbytes atIndex:MBAA_BUF_VERTICES];
+            } else {
+                TransientSlice vslice = alloc_transient_buffer(verts.data(), vbytes);
+                if (vslice.buf == nil) {
+                    return;
+                }
+                [enc setVertexBuffer:vslice.buf offset:vslice.offset atIndex:MBAA_BUF_VERTICES];
+            }
+            [enc setVertexBytes:&du length:sizeof(du) atIndex:MBAA_BUF_DRAW_UNIFORMS];
+            [enc setFragmentBytes:&du length:sizeof(du) atIndex:MBAA_BUF_DRAW_UNIFORMS];
 
-        if (fx != nullptr) {
-            [enc setFragmentBytes:&fx->uniforms length:sizeof(fx->uniforms) atIndex:MBAA_BUF_EFFECT_UNIFORMS];
-            bind_effect_textures(mem, enc, *fx, pass_id);
-        } else {
-            [enc setFragmentTexture:resolve_stage_texture(mem, bound_textures[0]) atIndex:MBAA_TEX_STAGE0];
-            [enc setFragmentSamplerState:get_sampler(sampler_states[0]) atIndex:0];
-        }
+            if (fx != nullptr) {
+                [enc setFragmentBytes:&fx->uniforms length:sizeof(fx->uniforms) atIndex:MBAA_BUF_EFFECT_UNIFORMS];
+                bind_effect_textures(mem, enc, *fx, pass_id);
+            } else {
+                [enc setFragmentTexture:resolve_stage_texture(mem, bound_textures[0]) atIndex:MBAA_TEX_STAGE0];
+                [enc setFragmentSamplerState:get_sampler(sampler_states[0]) atIndex:0];
+            }
 
-        if (draw_indices != nullptr) {
-            id<MTLBuffer> ib = [device newBufferWithBytes:draw_indices
-                                                 length:draw_index_count * sizeof(uint32_t)
-                                                options:MTLResourceStorageModeShared];
-            [enc drawIndexedPrimitives:mtl_prim
-                            indexCount:draw_index_count
-                             indexType:MTLIndexTypeUInt32
-                           indexBuffer:ib
-                     indexBufferOffset:0];
-        } else {
-            [enc drawPrimitives:mtl_prim vertexStart:0 vertexCount:draw_index_count];
-        }
-        ++draw_calls;
-        if (draw_calls == 1u) {
-            hle_win32_log("First D3D9 draw: pass=%d fvf=0x%x vcnt=%u pcnt=%u rt=%ux%u tex0=0x%08x",
-                          static_cast<int>(pass_id), current_fvf, vcount, prim_count,
-                          static_cast<uint32_t>(rtw), static_cast<uint32_t>(rth), bound_textures[0]);
+            if (draw_indices != nullptr) {
+                TransientSlice islice = alloc_transient_buffer(draw_indices, draw_index_count * sizeof(uint32_t));
+                if (islice.buf == nil) {
+                    return;
+                }
+                [enc drawIndexedPrimitives:mtl_prim
+                                indexCount:draw_index_count
+                                 indexType:MTLIndexTypeUInt32
+                               indexBuffer:islice.buf
+                         indexBufferOffset:islice.offset];
+            } else {
+                [enc drawPrimitives:mtl_prim vertexStart:0 vertexCount:draw_index_count];
+            }
+            ++draw_calls;
+            if (draw_calls == 1u) {
+                hle_win32_log("First D3D9 draw: pass=%d fvf=0x%x vcnt=%u pcnt=%u rt=%ux%u tex0=0x%08x",
+                              static_cast<int>(pass_id), current_fvf, vcount, prim_count,
+                              static_cast<uint32_t>(rtw), static_cast<uint32_t>(rth), bound_textures[0]);
+            }
         }
     }
 
@@ -1470,8 +1815,12 @@ struct D3D9MetalBridge::Impl {
         end_active_encoder();
         if (!metal_layer || !device || !cmd_queue) {
             if (frame_cmd_buf != nil) {
-                [frame_cmd_buf commit];
-                frame_cmd_buf = nil;
+                @autoreleasepool {
+                    [frame_cmd_buf commit];
+                    frame_cmd_buf = nil;
+                }
+                transient_ring_slot = (transient_ring_slot + 1u) % kTransientRingSlots;
+                transient_ring_offset = 0u;
             }
             return;
         }
@@ -1482,6 +1831,8 @@ struct D3D9MetalBridge::Impl {
                 if (frame_cmd_buf != nil) {
                     [frame_cmd_buf commit];
                     frame_cmd_buf = nil;
+                    transient_ring_slot = (transient_ring_slot + 1u) % kTransientRingSlots;
+                    transient_ring_offset = 0u;
                 }
                 return;
             }
@@ -1533,6 +1884,8 @@ struct D3D9MetalBridge::Impl {
             [cb presentDrawable:drawable];
             [cb commit];
             frame_cmd_buf = nil;
+            transient_ring_slot = (transient_ring_slot + 1u) % kTransientRingSlots;
+            transient_ring_offset = 0u;
         }
     }
 
@@ -1599,38 +1952,78 @@ void com_unknown_release(CpuContext& ctx, GuestMemory& mem) {
                 const uint32_t hid  = mem.r32(self_va + 4u);
                 const uint32_t kind = mem.r32(self_va + 12u);
                 bool can_free_self = false;
-                if (kind == kKindTexture) {
-                    if (auto it = im->textures.find(hid); it != im->textures.end()) {
-                        if (im->cached_texture_bytes >= it->second.gpu_bytes) {
-                            im->cached_texture_bytes -= it->second.gpu_bytes;
-                        } else {
-                            im->cached_texture_bytes = 0u;
+                @autoreleasepool {
+                    if (kind == kKindTexture) {
+                        for (uint32_t& bva : im->bound_textures) {
+                            if (bva == self_va) bva = 0u;
                         }
-                        if (it->second.staging_va) mem.guest_free(it->second.staging_va);
-                        im->textures.erase(it);
+                        if (auto it = im->textures.find(hid); it != im->textures.end()) {
+                            auto& tr = it->second;
+                            if (tr.mtl_tex != nil && !tr.evicted && !tr.is_render_target && !tr.is_depth_stencil) {
+                                if (im->cached_texture_bytes >= tr.gpu_bytes) {
+                                    im->cached_texture_bytes -= tr.gpu_bytes;
+                                } else {
+                                    im->cached_texture_bytes = 0u;
+                                }
+                            }
+                            // If a live child RT/DS surface outlives its parent texture, transfer ownership cleanly
+                            if (tr.surface_guest_va != 0u && (tr.is_render_target || tr.is_depth_stencil) && tr.mtl_tex != nil) {
+                                if (SurfaceRecord* sr = im->find_surface_by_va(mem, tr.surface_guest_va)) {
+                                    sr->mtl_tex = tr.mtl_tex;
+                                    sr->parent_tex_id = 0u;
+                                }
+                            }
+                            tr.mtl_tex = nil;
+                            if (tr.staging_va) mem.guest_free(tr.staging_va);
+                            im->textures.erase(it);
+                        }
+                        can_free_self = true;
+                    } else if (kind == kKindSurface && hid > 2u) {
+                        for (uint32_t& rva : im->bound_rt_surfaces) {
+                            if (rva == self_va) {
+                                im->end_active_encoder();
+                                rva = 0u;
+                                im->encoder_rt_dirty = true;
+                            }
+                        }
+                        if (im->bound_ds_surface == self_va) {
+                            im->end_active_encoder();
+                            im->bound_ds_surface = 0u;
+                            im->encoder_rt_dirty = true;
+                        }
+                        if (auto it = im->surfaces.find(hid); it != im->surfaces.end()) {
+                            auto& sr = it->second;
+                            if (sr.parent_tex_id != 0u) {
+                                if (auto tit = im->textures.find(sr.parent_tex_id); tit != im->textures.end()) {
+                                    if (tit->second.surface_guest_va == self_va) {
+                                        tit->second.surface_guest_va = 0u;
+                                    }
+                                }
+                            }
+                            sr.mtl_tex = nil;
+                            if (sr.staging_va) mem.guest_free(sr.staging_va);
+                            im->surfaces.erase(it);
+                        }
+                        can_free_self = true;
+                    } else if (kind == kKindEffect) {
+                        if (im->active_effect_id == hid || im->active_effect_id == self_va) {
+                            im->active_effect_id = 0u;
+                        }
+                        im->effects.erase(hid);
+                        can_free_self = true;
+                    } else if (kind == kKindFont) {
+                        if (auto it = im->fonts.find(hid); it != im->fonts.end()) {
+                            if (it->second.ct_font) CFRelease(it->second.ct_font);
+                            im->fonts.erase(it);
+                        }
+                        can_free_self = true;
+                    } else if (kind == kKindVBuf || kind == kKindIBuf) {
+                        if (auto it = im->buffers.find(hid); it != im->buffers.end()) {
+                            if (it->second.data_va) mem.guest_free(it->second.data_va);
+                            im->buffers.erase(it);
+                        }
+                        can_free_self = true;
                     }
-                    can_free_self = true;
-                } else if (kind == kKindSurface && hid > 2u) {
-                    if (auto it = im->surfaces.find(hid); it != im->surfaces.end()) {
-                        if (it->second.staging_va) mem.guest_free(it->second.staging_va);
-                        im->surfaces.erase(it);
-                    }
-                    can_free_self = true;
-                } else if (kind == kKindEffect) {
-                    im->effects.erase(hid);
-                    can_free_self = true;
-                } else if (kind == kKindFont) {
-                    if (auto it = im->fonts.find(hid); it != im->fonts.end()) {
-                        if (it->second.ct_font) CFRelease(it->second.ct_font);
-                        im->fonts.erase(it);
-                    }
-                    can_free_self = true;
-                } else if (kind == kKindVBuf || kind == kKindIBuf) {
-                    if (auto it = im->buffers.find(hid); it != im->buffers.end()) {
-                        if (it->second.data_va) mem.guest_free(it->second.data_va);
-                        im->buffers.erase(it);
-                    }
-                    can_free_self = true;
                 }
                 if (can_free_self && self_va >= GuestMemory::kHeapBase) {
                     mem.guest_free(self_va);
@@ -1929,7 +2322,9 @@ uint32_t create_texture_internal(
     if (h == 0u) h = 1u;
     const bool is_rt = (usage & kUsageRenderTarget) != 0u;
     const bool is_ds = (usage & kUsageDepthStencil) != 0u;
-    const MTLPixelFormat mfmt = d3d_fmt_to_mtl(format);
+    const uint32_t eff_fmt = format ? format : kFmtA8R8G8B8;
+    const MTLPixelFormat mfmt = d3d_fmt_to_mtl(eff_fmt);
+    const uint32_t m_bpp = mtl_bytes_per_pixel(mfmt);
 
     TextureRecord rec{};
     rec.id               = ++im.next_handle_id;
@@ -1937,18 +2332,23 @@ uint32_t create_texture_internal(
     rec.height           = h;
     rec.levels           = levels ? levels : 1u;
     rec.usage            = usage;
-    rec.format           = format ? format : kFmtA8R8G8B8;
+    rec.format           = eff_fmt;
     rec.pool             = pool;
     rec.is_render_target = is_rt;
     rec.is_depth_stencil = is_ds;
     rec.last_used_tick   = ++im.lru_clock;
-    rec.mtl_tex          = im.make_mtl_texture(w, h, mfmt, is_rt, is_ds);
+    rec.gpu_bytes        = static_cast<size_t>(w) * h * m_bpp;
 
-    const uint32_t m_bpp = (mfmt == MTLPixelFormatA8Unorm || mfmt == MTLPixelFormatR8Unorm) ? 1u : 4u;
-    rec.gpu_bytes = static_cast<size_t>(w) * h * m_bpp;
-    if (!is_rt && !is_ds) {
-        im.cached_texture_bytes += rec.gpu_bytes;
-        im.evict_lru_to_budget(D3D9MetalBridge::kTextureCacheLimitBytes);
+    // Defer GPU allocation for D3DPOOL_SYSTEMMEM textures (e.g. 256x256 .cg tile sheets
+    // that are only used as CPU sources for D3DXLoadSurfaceFromSurface).
+    if (pool == kPoolSystemMem && !is_rt && !is_ds) {
+        rec.mtl_tex = nil;
+    } else {
+        rec.mtl_tex = im.make_mtl_texture(w, h, mfmt, is_rt, is_ds);
+        if (!is_rt && !is_ds && rec.mtl_tex != nil) {
+            im.cached_texture_bytes += rec.gpu_bytes;
+            im.evict_lru_to_budget(D3D9MetalBridge::kTextureCacheLimitBytes);
+        }
     }
 
     rec.guest_va = im.alloc_com_object(mem, im.vtbl_texture, rec.id, kKindTexture, true);
@@ -2103,70 +2503,104 @@ void com_dev_stretch_rect(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t filter      = ctx.arg32(mem, 5);
     if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
-        id<MTLTexture> src_tex = im->resolve_surface_texture(mem, src_va);
-        id<MTLTexture> dst_tex = im->resolve_surface_texture(mem, dst_va);
-        if (src_tex != nil && dst_tex != nil && src_tex != dst_tex) {
-            im->end_active_encoder();
-            if (id<MTLCommandBuffer> cb = im->ensure_cmd_buffer()) {
-                if (src_rect_va == 0u && dst_rect_va == 0u &&
-                    src_tex.width == dst_tex.width && src_tex.height == dst_tex.height &&
-                    src_tex.pixelFormat == dst_tex.pixelFormat) {
-                    id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
-                    if (blit != nil) {
-                        [blit copyFromTexture:src_tex
-                                  sourceSlice:0
-                                  sourceLevel:0
-                                 sourceOrigin:MTLOriginMake(0, 0, 0)
-                                   sourceSize:MTLSizeMake(src_tex.width, src_tex.height, 1)
-                                    toTexture:dst_tex
-                             destinationSlice:0
-                             destinationLevel:0
-                            destinationOrigin:MTLOriginMake(0, 0, 0)];
-                        [blit endEncoding];
-                    }
-                } else if ((dst_tex.usage & MTLTextureUsageRenderTarget) != 0u) {
-                    const uint32_t dw = static_cast<uint32_t>(dst_tex.width);
-                    const uint32_t dh = static_cast<uint32_t>(dst_tex.height);
-                    double vx = 0.0, vy = 0.0, vw = static_cast<double>(dw), vh = static_cast<double>(dh);
-                    bool partial_dst = false;
-                    if (dst_rect_va != 0u && mem.in_bounds(dst_rect_va, 16u)) {
-                        const int32_t dl = static_cast<int32_t>(mem.r32(dst_rect_va + 0u));
-                        const int32_t dt = static_cast<int32_t>(mem.r32(dst_rect_va + 4u));
-                        const int32_t dr = static_cast<int32_t>(mem.r32(dst_rect_va + 8u));
-                        const int32_t db = static_cast<int32_t>(mem.r32(dst_rect_va + 12u));
-                        if (dr > dl && db > dt) {
-                            vx = std::clamp<double>(dl, 0.0, static_cast<double>(dw));
-                            vy = std::clamp<double>(dt, 0.0, static_cast<double>(dh));
-                            vw = std::clamp<double>(dr - dl, 1.0, static_cast<double>(dw) - vx);
-                            vh = std::clamp<double>(db - dt, 1.0, static_cast<double>(dh) - vy);
-                            partial_dst = (dl > 0 || dt > 0 || static_cast<uint32_t>(dr) < dw || static_cast<uint32_t>(db) < dh);
+        @autoreleasepool {
+            id<MTLTexture> src_tex = im->resolve_surface_texture(mem, src_va);
+            id<MTLTexture> dst_tex = im->resolve_surface_texture(mem, dst_va);
+            if (src_tex != nil && dst_tex != nil && src_tex != dst_tex) {
+                im->end_active_encoder();
+                const uint32_t sw_full = static_cast<uint32_t>(src_tex.width);
+                const uint32_t sh_full = static_cast<uint32_t>(src_tex.height);
+                const uint32_t dw_full = static_cast<uint32_t>(dst_tex.width);
+                const uint32_t dh_full = static_cast<uint32_t>(dst_tex.height);
+
+                uint32_t sx = 0u, sy = 0u, sw = sw_full, sh = sh_full;
+                uint32_t dx = 0u, dy = 0u, dw = dw_full, dh = dh_full;
+                parse_clamped_lock_rect(mem, src_rect_va, sw_full, sh_full, sx, sy, sw, sh);
+                parse_clamped_lock_rect(mem, dst_rect_va, dw_full, dh_full, dx, dy, dw, dh);
+
+                if (id<MTLCommandBuffer> cb = im->ensure_cmd_buffer()) {
+                    if (sw == dw && sh == dh && src_tex.pixelFormat == dst_tex.pixelFormat) {
+                        id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+                        if (blit != nil) {
+                            [blit copyFromTexture:src_tex
+                                      sourceSlice:0
+                                      sourceLevel:0
+                                     sourceOrigin:MTLOriginMake(sx, sy, 0)
+                                       sourceSize:MTLSizeMake(sw, sh, 1)
+                                        toTexture:dst_tex
+                                 destinationSlice:0
+                                 destinationLevel:0
+                                destinationOrigin:MTLOriginMake(dx, dy, 0)];
+                            [blit endEncoding];
                         }
-                    }
-                    MTLRenderPassDescriptor* rpd = [MTLRenderPassDescriptor renderPassDescriptor];
-                    rpd.colorAttachments[0].texture     = dst_tex;
-                    rpd.colorAttachments[0].loadAction  = partial_dst ? MTLLoadActionLoad : MTLLoadActionDontCare;
-                    rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
-                    id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rpd];
-                    if (enc != nil) {
-                        [enc setViewport:MTLViewport{vx, vy, vw, vh, 0.0, 1.0}];
-                        PipelineCacheKey pkey{};
-                        pkey.pass_id = MBAA_PASS_PRESENT_BLIT;
-                        pkey.rt_fmt0 = static_cast<uint32_t>(dst_tex.pixelFormat);
-                        if (id<MTLRenderPipelineState> pso = im->get_pipeline(pkey)) {
+                    } else if ((dst_tex.usage & MTLTextureUsageRenderTarget) != 0u) {
+                        const bool full_src = (sx == 0u && sy == 0u && sw == sw_full && sh == sh_full);
+                        const bool partial_dst = (dx > 0u || dy > 0u || dw < dw_full || dh < dh_full);
+                        MTLRenderPassDescriptor* rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+                        rpd.colorAttachments[0].texture     = dst_tex;
+                        rpd.colorAttachments[0].loadAction  = partial_dst ? MTLLoadActionLoad : MTLLoadActionDontCare;
+                        rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+                        id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rpd];
+                        if (enc != nil) {
                             SamplerStateBlock sb{};
                             sb.address_u = 3; sb.address_v = 3;
                             sb.mag_filter = (filter >= 2u) ? 2u : 1u;
                             sb.min_filter = sb.mag_filter;
-                            [enc setRenderPipelineState:pso];
-                            [enc setFragmentTexture:src_tex atIndex:MBAA_TEX_STAGE0];
-                            [enc setFragmentSamplerState:im->get_sampler(sb) atIndex:0];
-                            [enc drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
+                            if (full_src) {
+                                [enc setViewport:MTLViewport{
+                                    static_cast<double>(dx), static_cast<double>(dy),
+                                    static_cast<double>(dw), static_cast<double>(dh), 0.0, 1.0}];
+                                PipelineCacheKey pkey{};
+                                pkey.pass_id = MBAA_PASS_PRESENT_BLIT;
+                                pkey.rt_fmt0 = static_cast<uint32_t>(dst_tex.pixelFormat);
+                                if (id<MTLRenderPipelineState> pso = im->get_pipeline(pkey)) {
+                                    [enc setRenderPipelineState:pso];
+                                    [enc setFragmentTexture:src_tex atIndex:MBAA_TEX_STAGE0];
+                                    [enc setFragmentSamplerState:im->get_sampler(sb) atIndex:0];
+                                    [enc drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
+                                }
+                            } else {
+                                [enc setViewport:MTLViewport{
+                                    0.0, 0.0, static_cast<double>(dw_full), static_cast<double>(dh_full), 0.0, 1.0}];
+                                PipelineCacheKey pkey{};
+                                pkey.pass_id = MBAA_PASS_FIXED_2D;
+                                pkey.rt_fmt0 = static_cast<uint32_t>(dst_tex.pixelFormat);
+                                if (id<MTLRenderPipelineState> pso = im->get_pipeline(pkey)) {
+                                    const float u0 = static_cast<float>(sx) / static_cast<float>(sw_full);
+                                    const float v0 = static_cast<float>(sy) / static_cast<float>(sh_full);
+                                    const float u1 = static_cast<float>(sx + sw) / static_cast<float>(sw_full);
+                                    const float v1 = static_cast<float>(sy + sh) / static_cast<float>(sh_full);
+                                    const float x0 = static_cast<float>(dx) - 0.5f;
+                                    const float y0 = static_cast<float>(dy) - 0.5f;
+                                    const float x1 = static_cast<float>(dx + dw) - 0.5f;
+                                    const float y1 = static_cast<float>(dy + dh) - 0.5f;
+                                    MbaaMetalVertex qv[4]{};
+                                    qv[0] = {{x0, y0, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f}, {u0, v0}, {u0, v0}};
+                                    qv[1] = {{x1, y0, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f}, {u1, v0}, {u1, v0}};
+                                    qv[2] = {{x0, y1, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f}, {u0, v1}, {u0, v1}};
+                                    qv[3] = {{x1, y1, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f}, {u1, v1}, {u1, v1}};
+                                    MbaaDrawUniforms du{};
+                                    du.viewport_inv   = {2.0f / static_cast<float>(dw_full), 2.0f / static_cast<float>(dh_full), 0.0f, 0.0f};
+                                    du.is_transformed = 1u;
+                                    du.has_texture    = 1u;
+                                    du.color_op0      = 2u; // SELECTARG1
+                                    du.alpha_op0      = 2u;
+                                    [enc setRenderPipelineState:pso];
+                                    [enc setCullMode:MTLCullModeNone];
+                                    [enc setVertexBytes:qv length:sizeof(qv) atIndex:MBAA_BUF_VERTICES];
+                                    [enc setVertexBytes:&du length:sizeof(du) atIndex:MBAA_BUF_DRAW_UNIFORMS];
+                                    [enc setFragmentBytes:&du length:sizeof(du) atIndex:MBAA_BUF_DRAW_UNIFORMS];
+                                    [enc setFragmentTexture:src_tex atIndex:MBAA_TEX_STAGE0];
+                                    [enc setFragmentSamplerState:im->get_sampler(sb) atIndex:0];
+                                    [enc drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
+                                }
+                            }
+                            [enc endEncoding];
                         }
-                        [enc endEncoding];
                     }
                 }
+                im->encoder_rt_dirty = true;
             }
-            im->encoder_rt_dirty = true;
         }
     }
     ctx.eax = kS_OK;
@@ -2179,23 +2613,25 @@ void com_dev_color_fill(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t color   = ctx.arg32(mem, 3);
     if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
-        id<MTLTexture> dst_tex = im->resolve_surface_texture(mem, surf_va);
-        if (dst_tex != nil && (dst_tex.usage & MTLTextureUsageRenderTarget) != 0u) {
-            im->end_active_encoder();
-            if (id<MTLCommandBuffer> cb = im->ensure_cmd_buffer()) {
-                mbaa_float4 cf{};
-                argb_u32_to_float4(color, cf);
-                MTLRenderPassDescriptor* rpd = [MTLRenderPassDescriptor renderPassDescriptor];
-                rpd.colorAttachments[0].texture     = dst_tex;
-                rpd.colorAttachments[0].loadAction  = MTLLoadActionClear;
-                rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
-                rpd.colorAttachments[0].clearColor  = MTLClearColorMake(cf.x, cf.y, cf.z, cf.w);
-                id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rpd];
-                if (enc != nil) {
-                    [enc endEncoding];
+        @autoreleasepool {
+            id<MTLTexture> dst_tex = im->resolve_surface_texture(mem, surf_va);
+            if (dst_tex != nil && (dst_tex.usage & MTLTextureUsageRenderTarget) != 0u) {
+                im->end_active_encoder();
+                if (id<MTLCommandBuffer> cb = im->ensure_cmd_buffer()) {
+                    mbaa_float4 cf{};
+                    argb_u32_to_float4(color, cf);
+                    MTLRenderPassDescriptor* rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+                    rpd.colorAttachments[0].texture     = dst_tex;
+                    rpd.colorAttachments[0].loadAction  = MTLLoadActionClear;
+                    rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+                    rpd.colorAttachments[0].clearColor  = MTLClearColorMake(cf.x, cf.y, cf.z, cf.w);
+                    id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rpd];
+                    if (enc != nil) {
+                        [enc endEncoding];
+                    }
                 }
+                im->encoder_rt_dirty = true;
             }
-            im->encoder_rt_dirty = true;
         }
     }
     ctx.eax = kS_OK;
@@ -2235,9 +2671,14 @@ void com_dev_set_render_target(CpuContext& ctx, GuestMemory& mem) {
             im->end_active_encoder();
             im->bound_rt_surfaces[idx] = surf_va;
             im->encoder_rt_dirty = true;
-            if (idx == 0u) {
-                if (SurfaceRecord* sr = im->find_surface_by_va(mem, surf_va)) {
-                    im->vp_x = 0u; im->vp_y = 0u; im->vp_w = sr->width; im->vp_h = sr->height;
+        }
+        // DX9 spec: SetRenderTarget(0, ...) always resets the viewport to the full RT dimensions
+        if (idx == 0u) {
+            if (SurfaceRecord* sr = im->find_surface_by_va(mem, surf_va)) {
+                im->vp_x = 0u; im->vp_y = 0u; im->vp_w = sr->width; im->vp_h = sr->height;
+                if (im->active_encoder != nil) {
+                    [im->active_encoder setViewport:MTLViewport{
+                        0.0, 0.0, static_cast<double>(sr->width), static_cast<double>(sr->height), 0.0, 1.0}];
                 }
             }
         }
@@ -2307,14 +2748,23 @@ void com_dev_end_scene(CpuContext& ctx, GuestMemory& mem) {
 
 void com_dev_clear(CpuContext& ctx, GuestMemory& mem) {
     // (this, Count, pRects, Flags, Color, Z, Stencil) -> 28 bytes
-    const uint32_t flags = ctx.arg32(mem, 3);
-    const uint32_t color = ctx.arg32(mem, 4);
+    const uint32_t flags   = ctx.arg32(mem, 3);
+    const uint32_t color   = ctx.arg32(mem, 4);
+    const uint32_t z_bits  = ctx.arg32(mem, 5);
+    const uint32_t stencil = ctx.arg32(mem, 6);
+    float z_val = 1.0f;
+    std::memcpy(&z_val, &z_bits, sizeof(float));
     if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
         ++im->clear_calls;
         im->end_active_encoder();
         im->encoder_rt_dirty = true;
-        im->ensure_render_encoder(mem, 1u, (flags & 1u) != 0u, color, (flags & 2u) != 0u);
+        uint32_t clear_mrt = 1u;
+        if (im->resolve_rt_texture(mem, 2u) != nil) clear_mrt = 3u;
+        else if (im->resolve_rt_texture(mem, 1u) != nil) clear_mrt = 2u;
+        im->ensure_render_encoder(
+            mem, clear_mrt, (flags & 1u) != 0u, color, (flags & 6u) != 0u,
+            static_cast<double>(std::clamp(z_val, 0.0f, 1.0f)), stencil);
     }
     ctx.eax = kS_OK;
     ctx.ret_stdcall(mem, 28u);
@@ -2356,9 +2806,16 @@ void com_dev_set_viewport(CpuContext& ctx, GuestMemory& mem) {
         im->vp_w = mem.r32(vp_va + 8u);
         im->vp_h = mem.r32(vp_va + 12u);
         if (im->active_encoder != nil) {
+            id<MTLTexture> rt0 = im->resolve_rt_texture(mem, 0u);
+            const uint32_t rtw = rt0 ? static_cast<uint32_t>(rt0.width) : 4096u;
+            const uint32_t rth = rt0 ? static_cast<uint32_t>(rt0.height) : 4096u;
+            const uint32_t vx = std::min<uint32_t>(im->vp_x, rtw > 0u ? rtw - 1u : 0u);
+            const uint32_t vy = std::min<uint32_t>(im->vp_y, rth > 0u ? rth - 1u : 0u);
+            const uint32_t vw = std::max<uint32_t>(1u, std::min<uint32_t>(im->vp_w ? im->vp_w : rtw, rtw - vx));
+            const uint32_t vh = std::max<uint32_t>(1u, std::min<uint32_t>(im->vp_h ? im->vp_h : rth, rth - vy));
             MTLViewport mvp{
-                static_cast<double>(im->vp_x), static_cast<double>(im->vp_y),
-                static_cast<double>(im->vp_w), static_cast<double>(im->vp_h), 0.0, 1.0
+                static_cast<double>(vx), static_cast<double>(vy),
+                static_cast<double>(vw), static_cast<double>(vh), 0.0, 1.0
             };
             [im->active_encoder setViewport:mvp];
         }
@@ -2388,6 +2845,13 @@ void com_dev_set_render_state(CpuContext& ctx, GuestMemory& mem) {
     if (auto* im = active_impl(); im && st < im->render_states.size()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
         im->render_states[st] = val;
+        if (st == kRsScissorTestEnable && im->active_encoder != nil) {
+            if (id<MTLTexture> rt0 = im->resolve_rt_texture(mem, 0u)) {
+                im->apply_encoder_scissor(im->active_encoder,
+                                          static_cast<uint32_t>(rt0.width),
+                                          static_cast<uint32_t>(rt0.height));
+            }
+        }
     }
     ctx.eax = kS_OK;
     ctx.ret_stdcall(mem, 12u);
@@ -2460,11 +2924,23 @@ void com_dev_set_scissor_rect(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t rva = ctx.arg32(mem, 1);
     if (auto* im = active_impl(); im && rva && mem.in_bounds(rva, 16u)) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
-        if (im->active_encoder != nil && im->render_states[kRsScissorTestEnable]) {
-            const uint32_t l = mem.r32(rva + 0u), t = mem.r32(rva + 4u);
-            const uint32_t r = mem.r32(rva + 8u), b = mem.r32(rva + 12u);
-            if (r > l && b > t) {
-                [im->active_encoder setScissorRect:MTLScissorRect{l, t, r - l, b - t}];
+        const int32_t l = static_cast<int32_t>(mem.r32(rva + 0u));
+        const int32_t t = static_cast<int32_t>(mem.r32(rva + 4u));
+        const int32_t r = static_cast<int32_t>(mem.r32(rva + 8u));
+        const int32_t b = static_cast<int32_t>(mem.r32(rva + 12u));
+        if (r > l && b > t) {
+            const uint32_t cl = static_cast<uint32_t>(std::max<int32_t>(l, 0));
+            const uint32_t ct = static_cast<uint32_t>(std::max<int32_t>(t, 0));
+            const uint32_t cw = static_cast<uint32_t>(std::max<int32_t>(1, r - static_cast<int32_t>(cl)));
+            const uint32_t ch = static_cast<uint32_t>(std::max<int32_t>(1, b - static_cast<int32_t>(ct)));
+            im->scissor_rect  = MTLScissorRect{cl, ct, cw, ch};
+            im->scissor_valid = true;
+            if (im->active_encoder != nil && im->render_states[kRsScissorTestEnable]) {
+                if (id<MTLTexture> rt0 = im->resolve_rt_texture(mem, 0u)) {
+                    im->apply_encoder_scissor(im->active_encoder,
+                                              static_cast<uint32_t>(rt0.width),
+                                              static_cast<uint32_t>(rt0.height));
+                }
             }
         }
     }
@@ -2764,7 +3240,10 @@ void com_tex_get_surface_level(CpuContext& ctx, GuestMemory& mem) {
             sr.height        = std::max(1u, tr->height >> level);
             sr.format        = tr->format;
             sr.usage         = tr->usage;
-            sr.mtl_tex       = tr->mtl_tex;
+            // Keep sr.mtl_tex nil for child surfaces so TextureRecord is the sole ARC owner
+            // (allows LRU eviction to immediately release MTLTexture GPU memory; resolve_surface_texture
+            // reads live tr->mtl_tex via parent_tex_id).
+            sr.mtl_tex       = nil;
             sr.guest_va      = im->alloc_com_object(mem, im->vtbl_surface, sr.id, kKindSurface, true);
             if (level == 0u) tr->surface_guest_va = sr.guest_va;
             im->surfaces[sr.id] = sr;
@@ -2778,54 +3257,131 @@ void com_tex_get_surface_level(CpuContext& ctx, GuestMemory& mem) {
     ctx.ret_stdcall(mem, 12u);
 }
 
+bool lock_texture_record_rect(
+    GuestMemory& mem,
+    TextureRecord& tr,
+    uint32_t rect_va,
+    uint32_t flags,
+    uint32_t locked_va)
+{
+    uint32_t rx = 0u, ry = 0u, rw = tr.width, rh = tr.height;
+    parse_clamped_lock_rect(mem, rect_va, tr.width, tr.height, rx, ry, rw, rh);
+
+    uint32_t pitch = 0u, bytes = 0u;
+    compute_lock_pitch_bytes(tr.format, rw, rh, pitch, bytes);
+    if (bytes == 0u) bytes = 16u;
+
+    if (tr.staging_va != 0u) {
+        mem.guest_free(tr.staging_va);
+        tr.staging_va = 0u;
+        tr.staging_bytes = 0u;
+    }
+    const uint32_t alloc_va = mem.guest_alloc(bytes, 16u);
+    if (alloc_va == 0u || !mem.in_bounds(alloc_va, bytes)) {
+        if (alloc_va != 0u) mem.guest_free(alloc_va);
+        return false;
+    }
+
+    tr.staging_va    = alloc_va;
+    tr.staging_pitch = pitch;
+    tr.staging_bytes = bytes;
+    tr.lock_x        = rx;
+    tr.lock_y        = ry;
+    tr.lock_w        = rw;
+    tr.lock_h        = rh;
+    tr.lock_readonly = (flags & kD3DLockReadOnly) != 0u;
+    tr.locked        = true;
+
+    const bool discard = (flags & kD3DLockDiscard) != 0u;
+    if (tr.cpu_valid && !tr.cpu_backup.empty() && !discard && !is_dxt_format(tr.format)) {
+        convert_mtl_rect_to_staging(tr.format, tr.width, rx, ry, rw, rh,
+                                    tr.cpu_backup.data(), mem.ptr(alloc_va), pitch);
+    } else {
+        mem.zero_bytes(alloc_va, bytes);
+    }
+
+    mem.w32(locked_va + 0u, tr.staging_pitch);
+    mem.w32(locked_va + 4u, tr.staging_va);
+    return true;
+}
+
+void upload_staging_to_texture(D3D9MetalBridge::Impl& im, GuestMemory& mem, TextureRecord& tr) {
+    const uint32_t sva    = tr.staging_va;
+    const uint32_t sbytes = tr.staging_bytes;
+    const uint32_t spitch = tr.staging_pitch;
+    const bool readonly   = tr.lock_readonly;
+    const uint32_t rx     = tr.lock_x;
+    const uint32_t ry     = tr.lock_y;
+    const uint32_t rw     = tr.lock_w ? tr.lock_w : tr.width;
+    const uint32_t rh     = tr.lock_h ? tr.lock_h : tr.height;
+
+    if (!readonly && sva != 0u && sbytes > 0u && mem.in_bounds(sva, sbytes)) {
+        const bool was_valid = tr.cpu_valid;
+        const MTLPixelFormat mfmt = d3d_fmt_to_mtl(tr.format);
+        const uint32_t m_bpp = mtl_bytes_per_pixel(mfmt);
+
+        write_staging_rect_to_cpu_backup(tr.format, tr.width, tr.height,
+                                         rx, ry, rw, rh, mem.cptr(sva), spitch, tr.cpu_backup);
+        tr.cpu_valid = true;
+        tr.last_used_tick = ++im.lru_clock;
+
+        if (tr.pool != kPoolSystemMem && !tr.is_render_target && !tr.is_depth_stencil) {
+            if (tr.mtl_tex == nil) {
+                tr.mtl_tex = im.make_mtl_texture(tr.width, tr.height, mfmt, false, false);
+                if (tr.mtl_tex != nil) {
+                    tr.evicted = false;
+                    im.cached_texture_bytes += tr.gpu_bytes;
+                    im.evict_lru_to_budget(D3D9MetalBridge::kTextureCacheLimitBytes);
+                }
+            }
+            if (tr.mtl_tex != nil && tr.mtl_tex.storageMode == MTLStorageModeShared) {
+                const bool upload_full = !was_valid || (rx == 0u && ry == 0u && rw == tr.width && rh == tr.height);
+                @autoreleasepool {
+                    if (upload_full) {
+                        [tr.mtl_tex replaceRegion:MTLRegionMake2D(0, 0, tr.width, tr.height)
+                                        mipmapLevel:0
+                                          withBytes:tr.cpu_backup.data()
+                                        bytesPerRow:tr.width * m_bpp];
+                    } else {
+                        const uint8_t* sub_ptr = tr.cpu_backup.data() +
+                            (static_cast<size_t>(ry) * tr.width + rx) * m_bpp;
+                        [tr.mtl_tex replaceRegion:MTLRegionMake2D(rx, ry, rw, rh)
+                                        mipmapLevel:0
+                                          withBytes:sub_ptr
+                                        bytesPerRow:tr.width * m_bpp];
+                    }
+                }
+                tr.evicted = false;
+            }
+        }
+    }
+
+    // Free per-lock guest staging buffer immediately on unlock to avoid permanent guest heap bloat
+    if (tr.staging_va != 0u) {
+        mem.guest_free(tr.staging_va);
+        tr.staging_va    = 0u;
+        tr.staging_bytes = 0u;
+        tr.staging_pitch = 0u;
+    }
+    tr.lock_readonly = false;
+}
+
 void com_tex_lock_rect(CpuContext& ctx, GuestMemory& mem) {
     // (this, Level, pLockedRect, pRect, Flags) -> 20 bytes
-    const uint32_t tex_va     = ctx.arg32(mem, 0);
-    const uint32_t locked_va  = ctx.arg32(mem, 2);
+    const uint32_t tex_va    = ctx.arg32(mem, 0);
+    const uint32_t locked_va = ctx.arg32(mem, 2);
+    const uint32_t rect_va   = ctx.arg32(mem, 3);
+    const uint32_t flags     = ctx.arg32(mem, 4);
     if (auto* im = active_impl(); im && locked_va && mem.in_bounds(locked_va, 8u)) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
         if (TextureRecord* tr = im->find_texture_by_va(mem, tex_va)) {
-            const uint32_t bpp = bytes_per_pixel_for_d3d_fmt(tr->format);
-            const uint32_t pitch = tr->width * bpp;
-            const uint32_t bytes = pitch * tr->height;
-            if (tr->staging_va == 0u || tr->staging_bytes < bytes) {
-                if (tr->staging_va) mem.guest_free(tr->staging_va);
-                tr->staging_va    = mem.guest_alloc(bytes, 16u);
-                tr->staging_pitch = pitch;
-                tr->staging_bytes = bytes;
-                mem.zero_bytes(tr->staging_va, bytes);
-            }
-            tr->locked = true;
-            mem.w32(locked_va + 0u, tr->staging_pitch);
-            mem.w32(locked_va + 4u, tr->staging_va);
-            ctx.eax = kS_OK;
+            ctx.eax = lock_texture_record_rect(mem, *tr, rect_va, flags, locked_va) ? kS_OK : kE_FAIL;
             ctx.ret_stdcall(mem, 20u);
             return;
         }
     }
     ctx.eax = kD3DERR_INVALIDCALL;
     ctx.ret_stdcall(mem, 20u);
-}
-
-void upload_staging_to_texture(D3D9MetalBridge::Impl& im, const GuestMemory& mem, TextureRecord& tr) {
-    if (!tr.staging_va || !mem.in_bounds(tr.staging_va, tr.staging_bytes)) return;
-    const MTLPixelFormat mfmt = d3d_fmt_to_mtl(tr.format);
-    if (tr.mtl_tex == nil) {
-        tr.mtl_tex = im.make_mtl_texture(tr.width, tr.height, mfmt, tr.is_render_target, tr.is_depth_stencil);
-    }
-    if (tr.mtl_tex == nil) return;
-
-    std::vector<uint8_t> conv;
-    uint32_t out_pitch = 0u;
-    convert_staging_to_mtl_pixels(tr.format, tr.width, tr.height,
-                                  mem.cptr(tr.staging_va), tr.staging_pitch, conv, out_pitch);
-    [tr.mtl_tex replaceRegion:MTLRegionMake2D(0, 0, tr.width, tr.height)
-                    mipmapLevel:0
-                      withBytes:conv.data()
-                    bytesPerRow:out_pitch];
-    tr.cpu_backup = std::move(conv);
-    tr.evicted    = false;
-    tr.last_used_tick = ++im.lru_clock;
 }
 
 void com_tex_unlock_rect(CpuContext& ctx, GuestMemory& mem) {
@@ -2858,39 +3414,57 @@ void com_surf_get_desc(CpuContext& ctx, GuestMemory& mem) {
 }
 
 void com_surf_lock_rect(CpuContext& ctx, GuestMemory& mem) {
+    // (this, pLockedRect, pRect, Flags) -> 16 bytes
     const uint32_t surf_va   = ctx.arg32(mem, 0);
     const uint32_t locked_va = ctx.arg32(mem, 1);
+    const uint32_t rect_va   = ctx.arg32(mem, 2);
+    const uint32_t flags     = ctx.arg32(mem, 3);
     if (auto* im = active_impl(); im && locked_va && mem.in_bounds(locked_va, 8u)) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
         if (SurfaceRecord* sr = im->find_surface_by_va(mem, surf_va)) {
             if (sr->parent_tex_id != 0u) {
                 if (auto tit = im->textures.find(sr->parent_tex_id); tit != im->textures.end()) {
-                    auto& tr = tit->second;
-                    const uint32_t pitch = tr.width * bytes_per_pixel_for_d3d_fmt(tr.format);
-                    const uint32_t bytes = pitch * tr.height;
-                    if (!tr.staging_va || tr.staging_bytes < bytes) {
-                        if (tr.staging_va) mem.guest_free(tr.staging_va);
-                        tr.staging_va = mem.guest_alloc(bytes, 16u);
-                        tr.staging_pitch = pitch;
-                        tr.staging_bytes = bytes;
-                    }
-                    tr.locked = true;
-                    mem.w32(locked_va + 0u, tr.staging_pitch);
-                    mem.w32(locked_va + 4u, tr.staging_va);
-                    ctx.eax = kS_OK;
+                    const bool ok = lock_texture_record_rect(mem, tit->second, rect_va, flags, locked_va);
+                    sr->locked = ok;
+                    ctx.eax = ok ? kS_OK : kE_FAIL;
                     ctx.ret_stdcall(mem, 16u);
                     return;
                 }
             }
-            const uint32_t pitch = sr->width * 4u;
-            const uint32_t bytes = pitch * sr->height;
-            if (!sr->staging_va || sr->staging_bytes < bytes) {
-                if (sr->staging_va) mem.guest_free(sr->staging_va);
-                sr->staging_va = mem.guest_alloc(bytes, 16u);
-                sr->staging_pitch = pitch;
-                sr->staging_bytes = bytes;
+            uint32_t rx = 0u, ry = 0u, rw = sr->width, rh = sr->height;
+            parse_clamped_lock_rect(mem, rect_va, sr->width, sr->height, rx, ry, rw, rh);
+            uint32_t pitch = 0u, bytes = 0u;
+            compute_lock_pitch_bytes(sr->format, rw, rh, pitch, bytes);
+            if (bytes == 0u) bytes = 16u;
+
+            if (sr->staging_va != 0u) {
+                mem.guest_free(sr->staging_va);
+                sr->staging_va = 0u;
+                sr->staging_bytes = 0u;
             }
-            sr->locked = true;
+            const uint32_t alloc_va = mem.guest_alloc(bytes, 16u);
+            if (alloc_va == 0u || !mem.in_bounds(alloc_va, bytes)) {
+                if (alloc_va != 0u) mem.guest_free(alloc_va);
+                ctx.eax = kE_FAIL;
+                ctx.ret_stdcall(mem, 16u);
+                return;
+            }
+            sr->staging_va    = alloc_va;
+            sr->staging_pitch = pitch;
+            sr->staging_bytes = bytes;
+            sr->lock_x        = rx;
+            sr->lock_y        = ry;
+            sr->lock_w        = rw;
+            sr->lock_h        = rh;
+            sr->lock_readonly = (flags & kD3DLockReadOnly) != 0u;
+            sr->locked        = true;
+            const bool discard = (flags & kD3DLockDiscard) != 0u;
+            if (sr->cpu_valid && !sr->cpu_backup.empty() && !discard && !is_dxt_format(sr->format)) {
+                convert_mtl_rect_to_staging(sr->format, sr->width, rx, ry, rw, rh,
+                                            sr->cpu_backup.data(), mem.ptr(alloc_va), pitch);
+            } else {
+                mem.zero_bytes(alloc_va, bytes);
+            }
             mem.w32(locked_va + 0u, sr->staging_pitch);
             mem.w32(locked_va + 4u, sr->staging_va);
             ctx.eax = kS_OK;
@@ -2913,12 +3487,46 @@ void com_surf_unlock_rect(CpuContext& ctx, GuestMemory& mem) {
                     tit->second.locked = false;
                     upload_staging_to_texture(*im, mem, tit->second);
                 }
-            } else if (sr->mtl_tex != nil && sr->staging_va != 0u &&
-                       sr->mtl_tex.storageMode == MTLStorageModeShared) {
-                [sr->mtl_tex replaceRegion:MTLRegionMake2D(0, 0, sr->width, sr->height)
-                                mipmapLevel:0
-                                  withBytes:mem.cptr(sr->staging_va)
-                                bytesPerRow:sr->staging_pitch];
+            } else {
+                if (!sr->lock_readonly && sr->staging_va != 0u && sr->staging_bytes > 0u &&
+                    mem.in_bounds(sr->staging_va, sr->staging_bytes)) {
+                    const bool was_valid = sr->cpu_valid;
+                    const uint32_t rx = sr->lock_x;
+                    const uint32_t ry = sr->lock_y;
+                    const uint32_t rw = sr->lock_w ? sr->lock_w : sr->width;
+                    const uint32_t rh = sr->lock_h ? sr->lock_h : sr->height;
+                    const MTLPixelFormat mfmt = d3d_fmt_to_mtl(sr->format);
+                    const uint32_t m_bpp = mtl_bytes_per_pixel(mfmt);
+                    write_staging_rect_to_cpu_backup(sr->format, sr->width, sr->height,
+                                                     rx, ry, rw, rh, mem.cptr(sr->staging_va),
+                                                     sr->staging_pitch, sr->cpu_backup);
+                    sr->cpu_valid = true;
+                    if (sr->mtl_tex != nil && sr->mtl_tex.storageMode == MTLStorageModeShared) {
+                        const bool upload_full = !was_valid || (rx == 0u && ry == 0u && rw == sr->width && rh == sr->height);
+                        @autoreleasepool {
+                            if (upload_full) {
+                                [sr->mtl_tex replaceRegion:MTLRegionMake2D(0, 0, sr->width, sr->height)
+                                                mipmapLevel:0
+                                                  withBytes:sr->cpu_backup.data()
+                                                bytesPerRow:sr->width * m_bpp];
+                            } else {
+                                const uint8_t* sub_ptr = sr->cpu_backup.data() +
+                                    (static_cast<size_t>(ry) * sr->width + rx) * m_bpp;
+                                [sr->mtl_tex replaceRegion:MTLRegionMake2D(rx, ry, rw, rh)
+                                                mipmapLevel:0
+                                                  withBytes:sub_ptr
+                                                bytesPerRow:sr->width * m_bpp];
+                            }
+                        }
+                    }
+                }
+                if (sr->staging_va != 0u) {
+                    mem.guest_free(sr->staging_va);
+                    sr->staging_va    = 0u;
+                    sr->staging_bytes = 0u;
+                    sr->staging_pitch = 0u;
+                }
+                sr->lock_readonly = false;
             }
         }
     }
@@ -3833,29 +4441,38 @@ bool D3D9MetalBridge::init(void* cametal_layer, int width, int height) {
 
 void D3D9MetalBridge::shutdown() {
     std::lock_guard<std::recursive_mutex> lk(impl_->mtx);
-    impl_->end_active_encoder();
-    if (impl_->frame_cmd_buf != nil) {
-        [impl_->frame_cmd_buf commit];
-        impl_->frame_cmd_buf = nil;
+    @autoreleasepool {
+        impl_->end_active_encoder();
+        if (impl_->frame_cmd_buf != nil) {
+            [impl_->frame_cmd_buf commit];
+            impl_->frame_cmd_buf = nil;
+        }
+        for (auto& [id, fr] : impl_->fonts) {
+            if (fr.ct_font) CFRelease(fr.ct_font);
+        }
+        impl_->fonts.clear();
+        impl_->effects.clear();
+        impl_->surfaces.clear();
+        impl_->textures.clear();
+        impl_->buffers.clear();
+        impl_->pipeline_cache.clear();
+        impl_->sampler_cache.clear();
+        for (auto& rb : impl_->transient_rings) {
+            rb = nil;
+        }
+        impl_->transient_ring_slot   = 0u;
+        impl_->transient_ring_offset = 0u;
+        impl_->active_encoder_mrt_count = 0u;
+        impl_->scissor_valid         = false;
+        impl_->cached_texture_bytes  = 0u;
+        impl_->dummy_black_tex = nil;
+        impl_->dummy_mrt_tex   = nil;
+        impl_->depth_tex       = nil;
+        impl_->shader_lib      = nil;
+        impl_->cmd_queue       = nil;
+        impl_->device          = nil;
+        impl_->metal_layer     = nil;
     }
-    for (auto& [id, fr] : impl_->fonts) {
-        if (fr.ct_font) CFRelease(fr.ct_font);
-    }
-    impl_->fonts.clear();
-    impl_->effects.clear();
-    impl_->surfaces.clear();
-    impl_->textures.clear();
-    impl_->buffers.clear();
-    impl_->pipeline_cache.clear();
-    impl_->sampler_cache.clear();
-    impl_->cached_texture_bytes = 0u;
-    impl_->dummy_black_tex = nil;
-    impl_->dummy_mrt_tex   = nil;
-    impl_->depth_tex       = nil;
-    impl_->shader_lib      = nil;
-    impl_->cmd_queue       = nil;
-    impl_->device          = nil;
-    impl_->metal_layer     = nil;
     impl_->vtbl_d3d9       = 0u;
     impl_->vtbl_device     = 0u;
     impl_->vtbl_texture    = 0u;
@@ -4312,20 +4929,27 @@ bool D3D9MetalBridge::handle_d3d_iat(uint32_t iat_va, const char* api_name, CpuC
                     }
                 }
 
+                // Unify all 32-bit color textures onto canonical BGRA8 (matching D3D9 A8R8G8B8 layout)
+                rgba8_to_bgra8_inplace(rgba);
+
                 TextureRecord rec{};
                 rec.id             = ++impl_->next_handle_id;
                 rec.width          = (req_w != 0u && req_w != 0xFFFFFFFFu) ? req_w : w;
                 rec.height         = (req_h != 0u && req_h != 0xFFFFFFFFu) ? req_h : h;
                 rec.levels         = 1u;
                 rec.usage          = usage;
-                rec.format         = kFmtA8R8G8B8; // stored as straight RGBA8 in Metal
+                rec.format         = kFmtA8R8G8B8;
+                rec.pool           = kPoolManaged;
+                rec.cpu_valid      = true;
                 rec.last_used_tick = ++impl_->lru_clock;
-                rec.mtl_tex        = impl_->make_mtl_texture(w, h, MTLPixelFormatRGBA8Unorm, false, false);
+                rec.mtl_tex        = impl_->make_mtl_texture(w, h, MTLPixelFormatBGRA8Unorm, false, false);
                 if (rec.mtl_tex != nil) {
-                    [rec.mtl_tex replaceRegion:MTLRegionMake2D(0, 0, w, h)
-                                    mipmapLevel:0
-                                      withBytes:rgba.data()
-                                    bytesPerRow:w * 4u];
+                    @autoreleasepool {
+                        [rec.mtl_tex replaceRegion:MTLRegionMake2D(0, 0, w, h)
+                                        mipmapLevel:0
+                                          withBytes:rgba.data()
+                                        bytesPerRow:w * 4u];
+                    }
                 }
                 rec.width     = w;
                 rec.height    = h;
@@ -4402,12 +5026,15 @@ bool D3D9MetalBridge::handle_d3d_iat(uint32_t iat_va, const char* api_name, CpuC
                     fill[i * 4u + 3u] = a8;
                 }
                 if (tr->mtl_tex != nil && tr->mtl_tex.storageMode == MTLStorageModeShared) {
-                    [tr->mtl_tex replaceRegion:MTLRegionMake2D(0, 0, tr->width, tr->height)
-                                    mipmapLevel:0
-                                      withBytes:fill.data()
-                                    bytesPerRow:tr->width * 4u];
+                    @autoreleasepool {
+                        [tr->mtl_tex replaceRegion:MTLRegionMake2D(0, 0, tr->width, tr->height)
+                                        mipmapLevel:0
+                                          withBytes:fill.data()
+                                        bytesPerRow:tr->width * 4u];
+                    }
                 }
                 tr->cpu_backup = std::move(fill);
+                tr->cpu_valid  = true;
             }
             ctx.eax = kS_OK;
             ctx.ret_stdcall(mem, 12u);
@@ -4415,28 +5042,374 @@ bool D3D9MetalBridge::handle_d3d_iat(uint32_t iat_va, const char* api_name, CpuC
         }
 
         case d3d_iat::kD3DXLoadSurfaceFromSurface: {
-            // (pDest, pDestPal, pDestRect, pSrc, pSrcPal, pSrcRect, Filter, ColorKey) -> 32 bytes
-            const uint32_t dst_va = ctx.arg32(mem, 0);
-            const uint32_t src_va = ctx.arg32(mem, 3);
+            // (0:pDest, 1:pDestPal, 2:pDestRect, 3:pSrc, 4:pSrcPal, 5:pSrcRect, 6:Filter, 7:ColorKey) -> 32 bytes
+            const uint32_t dst_va      = ctx.arg32(mem, 0);
+            const uint32_t dst_rect_va = ctx.arg32(mem, 2);
+            const uint32_t src_va      = ctx.arg32(mem, 3);
+            const uint32_t src_pal_va  = ctx.arg32(mem, 4);
+            const uint32_t src_rect_va = ctx.arg32(mem, 5);
+            const uint32_t filter      = ctx.arg32(mem, 6);
+            const uint32_t colorkey    = ctx.arg32(mem, 7);
+
             SurfaceRecord* dst = impl_->find_surface_by_va(mem, dst_va);
             SurfaceRecord* src = impl_->find_surface_by_va(mem, src_va);
-            if (dst && src && dst->mtl_tex != nil && src->mtl_tex != nil &&
-                dst->width == src->width && dst->height == src->height &&
-                dst->mtl_tex.pixelFormat == src->mtl_tex.pixelFormat) {
-                impl_->end_active_encoder();
-                id<MTLCommandBuffer> cb = impl_->ensure_cmd_buffer();
-                if (cb != nil) {
-                    id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
-                    [blit copyFromTexture:src->mtl_tex
-                              sourceSlice:0
-                              sourceLevel:0
-                             sourceOrigin:MTLOriginMake(0, 0, 0)
-                               sourceSize:MTLSizeMake(src->width, src->height, 1)
-                                toTexture:dst->mtl_tex
-                         destinationSlice:0
-                         destinationLevel:0
-                        destinationOrigin:MTLOriginMake(0, 0, 0)];
-                    [blit endEncoding];
+            if (dst && src && dst->width > 0u && dst->height > 0u && src->width > 0u && src->height > 0u) {
+                TextureRecord* dst_tr = nullptr;
+                TextureRecord* src_tr = nullptr;
+                if (dst->parent_tex_id != 0u) {
+                    if (auto it = impl_->textures.find(dst->parent_tex_id); it != impl_->textures.end()) {
+                        dst_tr = &it->second;
+                    }
+                }
+                if (src->parent_tex_id != 0u) {
+                    if (auto it = impl_->textures.find(src->parent_tex_id); it != impl_->textures.end()) {
+                        src_tr = &it->second;
+                    }
+                }
+
+                const uint32_t src_w = src->width;
+                const uint32_t src_h = src->height;
+                const uint32_t dst_w = dst->width;
+                const uint32_t dst_h = dst->height;
+                const uint32_t src_fmt = src_tr ? src_tr->format : src->format;
+                const uint32_t dst_fmt = dst_tr ? dst_tr->format : dst->format;
+
+                int32_t sl = 0, st = 0, sr_x = static_cast<int32_t>(src_w), sb = static_cast<int32_t>(src_h);
+                if (src_rect_va != 0u && mem.in_bounds(src_rect_va, 16u)) {
+                    sl   = static_cast<int32_t>(mem.r32(src_rect_va + 0u));
+                    st   = static_cast<int32_t>(mem.r32(src_rect_va + 4u));
+                    sr_x = static_cast<int32_t>(mem.r32(src_rect_va + 8u));
+                    sb   = static_cast<int32_t>(mem.r32(src_rect_va + 12u));
+                }
+                int32_t dl = 0, dt = 0, dr = static_cast<int32_t>(dst_w), db = static_cast<int32_t>(dst_h);
+                if (dst_rect_va != 0u && mem.in_bounds(dst_rect_va, 16u)) {
+                    dl = static_cast<int32_t>(mem.r32(dst_rect_va + 0u));
+                    dt = static_cast<int32_t>(mem.r32(dst_rect_va + 4u));
+                    dr = static_cast<int32_t>(mem.r32(dst_rect_va + 8u));
+                    db = static_cast<int32_t>(mem.r32(dst_rect_va + 12u));
+                }
+
+                const int32_t src_rw = sr_x - sl;
+                const int32_t src_rh = sb - st;
+                const int32_t dst_rw = dr - dl;
+                const int32_t dst_rh = db - dt;
+
+                if (src_rw > 0 && src_rh > 0 && dst_rw > 0 && dst_rh > 0) {
+                    const bool src_is_rt = src_tr ? src_tr->is_render_target : ((src->usage & kUsageRenderTarget) != 0u);
+                    const bool dst_is_rt = dst_tr ? dst_tr->is_render_target : ((dst->usage & kUsageRenderTarget) != 0u);
+                    const std::vector<uint8_t>* src_cpu = nullptr;
+                    if (!src_is_rt) {
+                        if (src_tr && src->mip_level == 0u && src_tr->cpu_valid && !src_tr->cpu_backup.empty()) {
+                            src_cpu = &src_tr->cpu_backup;
+                        } else if (!src_tr && src->cpu_valid && !src->cpu_backup.empty()) {
+                            src_cpu = &src->cpu_backup;
+                        }
+                    }
+
+                    if (src_cpu != nullptr) {
+                        // Path A: CPU-backed source -> full sub-rect / palette / colorkey / cross-format transfer
+                        const MTLPixelFormat src_mfmt = d3d_fmt_to_mtl(src_fmt);
+                        const MTLPixelFormat dst_mfmt = d3d_fmt_to_mtl(dst_fmt);
+                        const uint32_t src_m_bpp = mtl_bytes_per_pixel(src_mfmt);
+                        const uint32_t dst_m_bpp = mtl_bytes_per_pixel(dst_mfmt);
+
+                        // Optional 256-entry PALETTEENTRY (peRed, peGreen, peBlue, peFlags) for P8/A8P8
+                        std::array<uint8_t, 256 * 4> pal_bgra{};
+                        bool has_palette = false;
+                        if ((src_fmt == kFmtP8 || src_fmt == kFmtA8P8) &&
+                            src_pal_va != 0u && mem.in_bounds(src_pal_va, 1024u)) {
+                            const uint8_t* psrc = mem.cptr(src_pal_va);
+                            bool any_alpha = false;
+                            for (uint32_t i = 0; i < 256u; ++i) {
+                                if (psrc[i * 4u + 3u] != 0u) { any_alpha = true; break; }
+                            }
+                            for (uint32_t i = 0; i < 256u; ++i) {
+                                pal_bgra[i * 4u + 0u] = psrc[i * 4u + 2u]; // B
+                                pal_bgra[i * 4u + 1u] = psrc[i * 4u + 1u]; // G
+                                pal_bgra[i * 4u + 2u] = psrc[i * 4u + 0u]; // R
+                                pal_bgra[i * 4u + 3u] = any_alpha ? psrc[i * 4u + 3u] : 255u;
+                            }
+                            has_palette = true;
+                        }
+
+                        std::vector<uint8_t>& dst_cpu = dst_tr ? dst_tr->cpu_backup : dst->cpu_backup;
+                        bool& dst_cpu_valid = dst_tr ? dst_tr->cpu_valid : dst->cpu_valid;
+                        const bool dst_was_valid = dst_cpu_valid;
+                        const size_t dst_full_bytes = static_cast<size_t>(dst_w) * dst_h * dst_m_bpp;
+                        if (dst_cpu.size() != dst_full_bytes) {
+                            dst_cpu.assign(dst_full_bytes, 0u);
+                        }
+
+                        const uint8_t ck_r = static_cast<uint8_t>((colorkey >> 16) & 0xFFu);
+                        const uint8_t ck_g = static_cast<uint8_t>((colorkey >> 8)  & 0xFFu);
+                        const uint8_t ck_b = static_cast<uint8_t>(colorkey & 0xFFu);
+                        const bool force_opaque_dst = (dst_fmt == kFmtX8R8G8B8 || dst_fmt == kFmtR8G8B8 ||
+                                                       dst_fmt == kFmtR5G6B5   || dst_fmt == kFmtX1R5G5B5);
+
+                        const int32_t clip_x0 = std::max<int32_t>(0, dl);
+                        const int32_t clip_y0 = std::max<int32_t>(0, dt);
+                        const int32_t clip_x1 = std::min<int32_t>(static_cast<int32_t>(dst_w), dr);
+                        const int32_t clip_y1 = std::min<int32_t>(static_cast<int32_t>(dst_h), db);
+
+                        if (clip_x1 > clip_x0 && clip_y1 > clip_y0 &&
+                            src_cpu->size() >= static_cast<size_t>(src_w) * src_h * src_m_bpp) {
+                            const bool fast_1to1_bgra = (src_rw == dst_rw && src_rh == dst_rh &&
+                                                         src_m_bpp == 4u && dst_m_bpp == 4u &&
+                                                         colorkey == 0u && !force_opaque_dst);
+                            if (fast_1to1_bgra) {
+                                for (int32_t dy = clip_y0; dy < clip_y1; ++dy) {
+                                    const int32_t sy = st + (dy - dt);
+                                    if (sy < 0 || sy >= static_cast<int32_t>(src_h)) continue;
+                                    int32_t dx_start = clip_x0;
+                                    int32_t sx_start = sl + (dx_start - dl);
+                                    if (sx_start < 0) {
+                                        dx_start -= sx_start;
+                                        sx_start = 0;
+                                    }
+                                    int32_t copy_px = clip_x1 - dx_start;
+                                    if (sx_start + copy_px > static_cast<int32_t>(src_w)) {
+                                        copy_px = static_cast<int32_t>(src_w) - sx_start;
+                                    }
+                                    if (copy_px <= 0) continue;
+                                    const uint8_t* sp = src_cpu->data() + (static_cast<size_t>(sy) * src_w + sx_start) * 4u;
+                                    uint8_t* dp = dst_cpu.data() + (static_cast<size_t>(dy) * dst_w + dx_start) * 4u;
+                                    std::memmove(dp, sp, static_cast<size_t>(copy_px) * 4u);
+                                }
+                            } else {
+                                for (int32_t dy = clip_y0; dy < clip_y1; ++dy) {
+                                    const int32_t sy = st + static_cast<int32_t>((static_cast<int64_t>(dy - dt) * src_rh) / dst_rh);
+                                    if (sy < 0 || sy >= static_cast<int32_t>(src_h)) continue;
+                                    for (int32_t dx = clip_x0; dx < clip_x1; ++dx) {
+                                        const int32_t sx = sl + static_cast<int32_t>((static_cast<int64_t>(dx - dl) * src_rw) / dst_rw);
+                                        if (sx < 0 || sx >= static_cast<int32_t>(src_w)) continue;
+
+                                        uint8_t b = 0u, g = 0u, r = 0u, a = 255u;
+                                        const uint8_t* sp = src_cpu->data() + (static_cast<size_t>(sy) * src_w + sx) * src_m_bpp;
+                                        if (src_m_bpp == 4u) {
+                                            b = sp[0]; g = sp[1]; r = sp[2]; a = sp[3];
+                                        } else if (src_fmt == kFmtP8) {
+                                            const uint8_t idx = sp[0];
+                                            if (has_palette) {
+                                                b = pal_bgra[idx * 4u + 0u];
+                                                g = pal_bgra[idx * 4u + 1u];
+                                                r = pal_bgra[idx * 4u + 2u];
+                                                a = pal_bgra[idx * 4u + 3u];
+                                            } else {
+                                                b = g = r = idx; a = 255u;
+                                            }
+                                        } else if (src_fmt == kFmtA8P8) {
+                                            const uint8_t idx = sp[0];
+                                            const uint8_t alpha = sp[1];
+                                            if (has_palette) {
+                                                b = pal_bgra[idx * 4u + 0u];
+                                                g = pal_bgra[idx * 4u + 1u];
+                                                r = pal_bgra[idx * 4u + 2u];
+                                            } else {
+                                                b = g = r = idx;
+                                            }
+                                            a = alpha;
+                                        } else if (src_fmt == kFmtA8) {
+                                            b = g = r = 255u; a = sp[0];
+                                        } else {
+                                            b = g = r = sp[0]; a = 255u;
+                                        }
+
+                                        if (colorkey != 0u && r == ck_r && g == ck_g && b == ck_b) {
+                                            b = g = r = a = 0u;
+                                        } else if (force_opaque_dst) {
+                                            a = 255u;
+                                        }
+
+                                        uint8_t* dp = dst_cpu.data() + (static_cast<size_t>(dy) * dst_w + dx) * dst_m_bpp;
+                                        if (dst_m_bpp == 4u) {
+                                            dp[0] = b; dp[1] = g; dp[2] = r; dp[3] = a;
+                                        } else if (dst_fmt == kFmtA8) {
+                                            dp[0] = a;
+                                        } else if (dst_m_bpp == 2u) {
+                                            dp[0] = r; dp[1] = a;
+                                        } else {
+                                            dp[0] = static_cast<uint8_t>((77u * r + 150u * g + 29u * b) >> 8);
+                                        }
+                                    }
+                                }
+                            }
+
+                            dst_cpu_valid = true;
+                            id<MTLTexture> dst_mtl = dst_tr ? dst_tr->mtl_tex : dst->mtl_tex;
+                            if (dst_tr && dst_mtl == nil && dst_tr->pool != kPoolSystemMem &&
+                                !dst_tr->is_render_target && !dst_tr->is_depth_stencil) {
+                                dst_tr->mtl_tex = impl_->make_mtl_texture(dst_w, dst_h, dst_mfmt, false, false);
+                                dst_mtl = dst_tr->mtl_tex;
+                                if (dst_mtl != nil) {
+                                    dst_tr->evicted = false;
+                                    impl_->cached_texture_bytes += dst_tr->gpu_bytes;
+                                    impl_->evict_lru_to_budget(kTextureCacheLimitBytes);
+                                }
+                            }
+                            if (dst_tr) dst_tr->last_used_tick = ++impl_->lru_clock;
+
+                            if (dst_mtl != nil) {
+                                @autoreleasepool {
+                                    if (dst_mtl.storageMode == MTLStorageModeShared) {
+                                        const bool upload_full = !dst_was_valid ||
+                                            (clip_x0 == 0 && clip_y0 == 0 &&
+                                             clip_x1 == static_cast<int32_t>(dst_w) &&
+                                             clip_y1 == static_cast<int32_t>(dst_h));
+                                        if (upload_full) {
+                                            [dst_mtl replaceRegion:MTLRegionMake2D(0, 0, dst_w, dst_h)
+                                                       mipmapLevel:0
+                                                         withBytes:dst_cpu.data()
+                                                       bytesPerRow:dst_w * dst_m_bpp];
+                                        } else {
+                                            const uint8_t* sub_ptr = dst_cpu.data() +
+                                                (static_cast<size_t>(clip_y0) * dst_w + clip_x0) * dst_m_bpp;
+                                            [dst_mtl replaceRegion:MTLRegionMake2D(
+                                                                       static_cast<NSUInteger>(clip_x0),
+                                                                       static_cast<NSUInteger>(clip_y0),
+                                                                       static_cast<NSUInteger>(clip_x1 - clip_x0),
+                                                                       static_cast<NSUInteger>(clip_y1 - clip_y0))
+                                                       mipmapLevel:0
+                                                         withBytes:sub_ptr
+                                                       bytesPerRow:dst_w * dst_m_bpp];
+                                        }
+                                    } else if (dst_is_rt) {
+                                        // Private RenderTarget destination: upload via temporary shared staging texture
+                                        const uint32_t uw = static_cast<uint32_t>(clip_x1 - clip_x0);
+                                        const uint32_t uh = static_cast<uint32_t>(clip_y1 - clip_y0);
+                                        id<MTLTexture> stage = impl_->make_mtl_texture(uw, uh, dst_mtl.pixelFormat, false, false);
+                                        if (stage != nil) {
+                                            const uint8_t* sub_ptr = dst_cpu.data() +
+                                                (static_cast<size_t>(clip_y0) * dst_w + clip_x0) * dst_m_bpp;
+                                            [stage replaceRegion:MTLRegionMake2D(0, 0, uw, uh)
+                                                     mipmapLevel:0
+                                                       withBytes:sub_ptr
+                                                     bytesPerRow:dst_w * dst_m_bpp];
+                                            impl_->end_active_encoder();
+                                            if (id<MTLCommandBuffer> cb = impl_->ensure_cmd_buffer()) {
+                                                id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+                                                if (blit != nil) {
+                                                    [blit copyFromTexture:stage
+                                                              sourceSlice:0
+                                                              sourceLevel:0
+                                                             sourceOrigin:MTLOriginMake(0, 0, 0)
+                                                               sourceSize:MTLSizeMake(uw, uh, 1)
+                                                                toTexture:dst_mtl
+                                                         destinationSlice:0
+                                                         destinationLevel:0
+                                                        destinationOrigin:MTLOriginMake(
+                                                            static_cast<NSUInteger>(clip_x0),
+                                                            static_cast<NSUInteger>(clip_y0), 0)];
+                                                    [blit endEncoding];
+                                                }
+                                            }
+                                            impl_->encoder_rt_dirty = true;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Path B: GPU-backed source (e.g. RenderTarget -> Managed texture or RenderTarget)
+                        @autoreleasepool {
+                            id<MTLTexture> src_mtl = impl_->resolve_surface_texture(mem, src_va);
+                            id<MTLTexture> dst_mtl = impl_->resolve_surface_texture(mem, dst_va);
+                            if (dst_tr && dst_mtl == nil && dst_tr->pool != kPoolSystemMem &&
+                                !dst_tr->is_render_target && !dst_tr->is_depth_stencil) {
+                                dst_tr->mtl_tex = impl_->make_mtl_texture(dst_w, dst_h, d3d_fmt_to_mtl(dst_fmt), false, false);
+                                dst_mtl = dst_tr->mtl_tex;
+                                if (dst_mtl != nil) {
+                                    dst_tr->evicted = false;
+                                    impl_->cached_texture_bytes += dst_tr->gpu_bytes;
+                                    impl_->evict_lru_to_budget(kTextureCacheLimitBytes);
+                                }
+                            }
+                            if (src_mtl != nil && dst_mtl != nil && src_mtl != dst_mtl) {
+                                impl_->end_active_encoder();
+                                const uint32_t sx0 = static_cast<uint32_t>(std::clamp<int32_t>(sl, 0, static_cast<int32_t>(src_w) - 1));
+                                const uint32_t sy0 = static_cast<uint32_t>(std::clamp<int32_t>(st, 0, static_cast<int32_t>(src_h) - 1));
+                                const uint32_t sw_c = static_cast<uint32_t>(std::clamp<int32_t>(sr_x - static_cast<int32_t>(sx0), 1, static_cast<int32_t>(src_w - sx0)));
+                                const uint32_t sh_c = static_cast<uint32_t>(std::clamp<int32_t>(sb - static_cast<int32_t>(sy0), 1, static_cast<int32_t>(src_h - sy0)));
+                                const uint32_t dx0 = static_cast<uint32_t>(std::clamp<int32_t>(dl, 0, static_cast<int32_t>(dst_w) - 1));
+                                const uint32_t dy0 = static_cast<uint32_t>(std::clamp<int32_t>(dt, 0, static_cast<int32_t>(dst_h) - 1));
+                                const uint32_t dw_c = static_cast<uint32_t>(std::clamp<int32_t>(dr - static_cast<int32_t>(dx0), 1, static_cast<int32_t>(dst_w - dx0)));
+                                const uint32_t dh_c = static_cast<uint32_t>(std::clamp<int32_t>(db - static_cast<int32_t>(dy0), 1, static_cast<int32_t>(dst_h - dy0)));
+
+                                if (id<MTLCommandBuffer> cb = impl_->ensure_cmd_buffer()) {
+                                    if (src_mtl.pixelFormat == dst_mtl.pixelFormat &&
+                                        ((sw_c == dw_c && sh_c == dh_c) || (dst_mtl.usage & MTLTextureUsageRenderTarget) == 0u)) {
+                                        const uint32_t cw = std::min(sw_c, dw_c);
+                                        const uint32_t ch = std::min(sh_c, dh_c);
+                                        id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+                                        if (blit != nil) {
+                                            [blit copyFromTexture:src_mtl
+                                                      sourceSlice:0
+                                                      sourceLevel:0
+                                                     sourceOrigin:MTLOriginMake(sx0, sy0, 0)
+                                                       sourceSize:MTLSizeMake(cw, ch, 1)
+                                                        toTexture:dst_mtl
+                                                 destinationSlice:0
+                                                 destinationLevel:0
+                                                destinationOrigin:MTLOriginMake(dx0, dy0, 0)];
+                                            [blit endEncoding];
+                                        }
+                                    } else if ((dst_mtl.usage & MTLTextureUsageRenderTarget) != 0u) {
+                                        MTLRenderPassDescriptor* rpd = [MTLRenderPassDescriptor renderPassDescriptor];
+                                        rpd.colorAttachments[0].texture     = dst_mtl;
+                                        rpd.colorAttachments[0].loadAction  = MTLLoadActionLoad;
+                                        rpd.colorAttachments[0].storeAction = MTLStoreActionStore;
+                                        id<MTLRenderCommandEncoder> enc = [cb renderCommandEncoderWithDescriptor:rpd];
+                                        if (enc != nil) {
+                                            [enc setViewport:MTLViewport{0.0, 0.0, static_cast<double>(dst_w), static_cast<double>(dst_h), 0.0, 1.0}];
+                                            PipelineCacheKey pkey{};
+                                            pkey.pass_id = MBAA_PASS_FIXED_2D;
+                                            pkey.rt_fmt0 = static_cast<uint32_t>(dst_mtl.pixelFormat);
+                                            if (id<MTLRenderPipelineState> pso = impl_->get_pipeline(pkey)) {
+                                                const float u0 = static_cast<float>(sx0) / static_cast<float>(src_w);
+                                                const float v0 = static_cast<float>(sy0) / static_cast<float>(src_h);
+                                                const float u1 = static_cast<float>(sx0 + sw_c) / static_cast<float>(src_w);
+                                                const float v1 = static_cast<float>(sy0 + sh_c) / static_cast<float>(src_h);
+                                                const float x0 = static_cast<float>(dx0) - 0.5f;
+                                                const float y0 = static_cast<float>(dy0) - 0.5f;
+                                                const float x1 = static_cast<float>(dx0 + dw_c) - 0.5f;
+                                                const float y1 = static_cast<float>(dy0 + dh_c) - 0.5f;
+                                                MbaaMetalVertex qv[4]{};
+                                                qv[0] = {{x0, y0, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f}, {u0, v0}, {u0, v0}};
+                                                qv[1] = {{x1, y0, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f}, {u1, v0}, {u1, v0}};
+                                                qv[2] = {{x0, y1, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f}, {u0, v1}, {u0, v1}};
+                                                qv[3] = {{x1, y1, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f}, {u1, v1}, {u1, v1}};
+                                                MbaaDrawUniforms du{};
+                                                du.viewport_inv   = {2.0f / static_cast<float>(dst_w), 2.0f / static_cast<float>(dst_h), 0.0f, 0.0f};
+                                                du.is_transformed = 1u;
+                                                du.has_texture    = 1u;
+                                                du.color_op0      = 2u;
+                                                du.alpha_op0      = 2u;
+                                                SamplerStateBlock sb{};
+                                                sb.address_u = 3; sb.address_v = 3;
+                                                sb.mag_filter = (filter >= 2u) ? 2u : 1u;
+                                                sb.min_filter = sb.mag_filter;
+                                                [enc setRenderPipelineState:pso];
+                                                [enc setCullMode:MTLCullModeNone];
+                                                [enc setVertexBytes:qv length:sizeof(qv) atIndex:MBAA_BUF_VERTICES];
+                                                [enc setVertexBytes:&du length:sizeof(du) atIndex:MBAA_BUF_DRAW_UNIFORMS];
+                                                [enc setFragmentBytes:&du length:sizeof(du) atIndex:MBAA_BUF_DRAW_UNIFORMS];
+                                                [enc setFragmentTexture:src_mtl atIndex:MBAA_TEX_STAGE0];
+                                                [enc setFragmentSamplerState:impl_->get_sampler(sb) atIndex:0];
+                                                [enc drawPrimitives:MTLPrimitiveTypeTriangleStrip vertexStart:0 vertexCount:4];
+                                            }
+                                            [enc endEncoding];
+                                        }
+                                    }
+                                    impl_->encoder_rt_dirty = true;
+                                }
+                                if (dst_tr) {
+                                    dst_tr->cpu_valid = false;
+                                    dst_tr->last_used_tick = ++impl_->lru_clock;
+                                } else {
+                                    dst->cpu_valid = false;
+                                }
+                            }
+                        }
+                    }
                 }
             }
             ctx.eax = kS_OK;

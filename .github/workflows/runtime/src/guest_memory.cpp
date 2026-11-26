@@ -5,9 +5,11 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 
 #if defined(__APPLE__) || defined(__unix__)
 #include <sys/mman.h>
+#include <unistd.h>
 #elif defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -30,9 +32,17 @@ uint32_t read_le32_raw(const uint8_t* p) noexcept {
            (static_cast<uint32_t>(p[3]) << 24);
 }
 
-uint32_t align_up(uint32_t val, uint32_t align) noexcept {
-    if (align <= 1) return val;
+uint64_t align_up_u64(uint64_t val, uint64_t align) noexcept {
+    if (align <= 1u) return val;
     return (val + (align - 1u)) & ~(align - 1u);
+}
+
+uint32_t normalize_align(uint32_t align, uint32_t min_align) noexcept {
+    const uint32_t a = std::max(align, min_align);
+    if ((a & (a - 1u)) == 0u) return a;
+    uint32_t p = min_align;
+    while (p < a && p < 0x80000000u) p <<= 1u;
+    return p;
 }
 
 } // namespace
@@ -47,38 +57,46 @@ bool GuestMemory::init() {
     shutdown();
 
 #if defined(__APPLE__) || defined(__unix__)
+    const long ps = ::sysconf(_SC_PAGESIZE);
+    host_page_size_ = (ps >= 4096 && (ps & (ps - 1)) == 0) ? static_cast<uint32_t>(ps) : 16384u;
     void* mapped = ::mmap(nullptr, kArenaSize, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (mapped == MAP_FAILED || mapped == nullptr) {
         last_error_ = "mmap failed to reserve 256 MiB guest arena";
         return false;
     }
-    base_ = static_cast<uint8_t*>(mapped);
-    using_mmap_ = true;
+    uint8_t* new_base = static_cast<uint8_t*>(mapped);
+    const bool new_mmap = true;
 #elif defined(_WIN32)
+    host_page_size_ = 4096u;
     void* mapped = ::VirtualAlloc(nullptr, kArenaSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     if (mapped == nullptr) {
         last_error_ = "VirtualAlloc failed to reserve 256 MiB guest arena";
         return false;
     }
-    base_ = static_cast<uint8_t*>(mapped);
-    using_mmap_ = true;
+    uint8_t* new_base = static_cast<uint8_t*>(mapped);
+    const bool new_mmap = true;
 #else
-    base_ = static_cast<uint8_t*>(std::calloc(1, kArenaSize));
-    if (base_ == nullptr) {
+    host_page_size_ = 4096u;
+    uint8_t* new_base = static_cast<uint8_t*>(std::calloc(1, kArenaSize));
+    if (new_base == nullptr) {
         last_error_ = "calloc failed for 256 MiB guest arena";
         return false;
     }
-    using_mmap_ = false;
+    const bool new_mmap = false;
 #endif
 
     {
         std::lock_guard<std::mutex> lock(alloc_mutex_);
-        heap_cursor_         = kHeapBase;
-        thunk_cursor_        = kThunkPageBase;
-        thread_stack_cursor_ = kThreadStackBase;
+        base_                     = new_base;
+        using_mmap_               = new_mmap;
+        heap_cursor_              = kHeapBase;
+        thunk_cursor_             = kThunkPageBase;
+        heap_used_bytes_          = 0u;
+        active_thread_stack_mask_ = 0u;
         active_allocs_.clear();
         free_blocks_.clear();
-        free_thread_stacks_.clear();
+        free_by_size_.clear();
+        active_overflow_stacks_.clear();
     }
     sections_.clear();
     last_error_.clear();
@@ -88,30 +106,42 @@ bool GuestMemory::init() {
 }
 
 void GuestMemory::shutdown() {
-    if (base_ != nullptr) {
+    uint8_t* old_base = nullptr;
+    bool old_mmap = false;
+    {
+        std::lock_guard<std::mutex> lock(alloc_mutex_);
+        old_base                  = base_;
+        old_mmap                  = using_mmap_;
+        base_                     = nullptr;
+        using_mmap_               = false;
+        heap_cursor_              = kHeapBase;
+        thunk_cursor_             = kThunkPageBase;
+        heap_used_bytes_          = 0u;
+        active_thread_stack_mask_ = 0u;
+        active_allocs_.clear();
+        free_blocks_.clear();
+        free_by_size_.clear();
+        active_overflow_stacks_.clear();
+    }
+    sections_.clear();
+
+    if (old_base != nullptr) {
 #if defined(__APPLE__) || defined(__unix__)
-        if (using_mmap_) {
-            ::munmap(base_, kArenaSize);
+        if (old_mmap) {
+            ::munmap(old_base, kArenaSize);
         } else {
-            std::free(base_);
+            std::free(old_base);
         }
 #elif defined(_WIN32)
-        if (using_mmap_) {
-            ::VirtualFree(base_, 0, MEM_RELEASE);
+        if (old_mmap) {
+            ::VirtualFree(old_base, 0, MEM_RELEASE);
         } else {
-            std::free(base_);
+            std::free(old_base);
         }
 #else
-        std::free(base_);
+        std::free(old_base);
 #endif
-        base_ = nullptr;
-        using_mmap_ = false;
     }
-    std::lock_guard<std::mutex> lock(alloc_mutex_);
-    active_allocs_.clear();
-    free_blocks_.clear();
-    free_thread_stacks_.clear();
-    sections_.clear();
 }
 
 void GuestMemory::init_synthetic_teb_peb() {
@@ -412,146 +442,307 @@ uint32_t GuestMemory::write_cstring(uint32_t va, const std::string& s, size_t ma
     return static_cast<uint32_t>(copy_len);
 }
 
-uint32_t GuestMemory::guest_alloc(uint32_t size, uint32_t align) {
-    if (base_ == nullptr) return 0;
-    const uint32_t alloc_sz = align_up(std::max<uint32_t>(size, 16u), std::max<uint32_t>(align, 16u));
+void GuestMemory::insert_free_block_locked(uint32_t va, uint32_t size) {
+    if (size == 0u) return;
+    free_blocks_[va] = size;
+    free_by_size_.emplace(size, va);
+}
 
-    std::lock_guard<std::mutex> lock(alloc_mutex_);
-    // First-fit reuse from free_blocks_
-    for (size_t i = 0; i < free_blocks_.size(); ++i) {
-        if (free_blocks_[i].size >= alloc_sz && (free_blocks_[i].va % std::max<uint32_t>(align, 16u)) == 0) {
-            const uint32_t va = free_blocks_[i].va;
-            const uint32_t blk_sz = free_blocks_[i].size;
-            if (blk_sz - alloc_sz >= 32u) {
-                free_blocks_[i].va += alloc_sz;
-                free_blocks_[i].size -= alloc_sz;
-            } else {
-                free_blocks_.erase(free_blocks_.begin() + static_cast<std::ptrdiff_t>(i));
+void GuestMemory::erase_free_block_locked(uint32_t va, uint32_t size) {
+    free_blocks_.erase(va);
+    free_by_size_.erase({size, va});
+}
+
+void GuestMemory::advise_reclaimable_locked(uint32_t va, uint32_t size, uint32_t min_bytes) noexcept {
+#if defined(__APPLE__)
+    if (!using_mmap_ || base_ == nullptr || size < min_bytes) return;
+    const uint64_t ps = (host_page_size_ >= 4096u) ? static_cast<uint64_t>(host_page_size_) : 16384u;
+    const uint64_t start = align_up_u64(va, ps);
+    const uint64_t end   = (static_cast<uint64_t>(va) + size) & ~(ps - 1u);
+    if (end > start && (end - start) >= min_bytes) {
+        ::madvise(base_ + start, static_cast<size_t>(end - start), MADV_FREE);
+    }
+#else
+    (void)va;
+    (void)size;
+    (void)min_bytes;
+#endif
+}
+
+void GuestMemory::free_range_locked(uint32_t va, uint32_t size) {
+    if (size == 0u) return;
+
+    auto next_it = free_blocks_.lower_bound(va);
+
+    // Coalesce with immediately preceding free block in O(log N)
+    if (next_it != free_blocks_.begin()) {
+        auto prev_it = std::prev(next_it);
+        if (prev_it->first + prev_it->second == va) {
+            const uint32_t prev_va = prev_it->first;
+            const uint32_t prev_sz = prev_it->second;
+            free_by_size_.erase({prev_sz, prev_va});
+            free_blocks_.erase(prev_it);
+            va = prev_va;
+            size += prev_sz;
+        }
+    }
+
+    // Coalesce with immediately following free block in O(log N)
+    if (next_it != free_blocks_.end() && va + size == next_it->first) {
+        const uint32_t next_va = next_it->first;
+        const uint32_t next_sz = next_it->second;
+        free_by_size_.erase({next_sz, next_va});
+        free_blocks_.erase(next_it);
+        size += next_sz;
+    }
+
+    // Rewind heap_cursor_ whenever the coalesced free region reaches the top of the heap
+    if (va + size == heap_cursor_) {
+        const uint32_t old_cursor = heap_cursor_;
+        heap_cursor_ = va;
+        advise_reclaimable_locked(heap_cursor_, old_cursor - heap_cursor_, 65536u);
+        return;
+    }
+
+    insert_free_block_locked(va, size);
+    advise_reclaimable_locked(va, size, 262144u);
+}
+
+uint32_t GuestMemory::guest_alloc_locked(uint32_t size, uint32_t align) {
+    if (base_ == nullptr) return 0u;
+    constexpr uint32_t kMaxHeapBytes = kLargeHeapLimit - kHeapBase;
+    if (size > kMaxHeapBytes) return 0u;
+
+    const uint32_t eff_align = normalize_align(align, kMinAllocAlign);
+    if (eff_align > kMaxHeapBytes) return 0u;
+
+    const uint64_t alloc_sz64 = align_up_u64(std::max<uint64_t>(size, kMinAllocAlign), kMinAllocAlign);
+    if (alloc_sz64 > kMaxHeapBytes) return 0u;
+    const uint32_t alloc_sz = static_cast<uint32_t>(alloc_sz64);
+
+    // O(log N) best-fit (lowest-VA tie-break) search with alignment-aware leading/trailing splits
+    for (auto sit = free_by_size_.lower_bound({alloc_sz, 0u}); sit != free_by_size_.end(); ++sit) {
+        const uint32_t blk_sz  = sit->first;
+        const uint32_t blk_va  = sit->second;
+        const uint64_t blk_end = static_cast<uint64_t>(blk_va) + blk_sz;
+        const uint64_t aligned = align_up_u64(blk_va, eff_align);
+        if (aligned + alloc_sz <= blk_end) {
+            const uint32_t va       = static_cast<uint32_t>(aligned);
+            const uint32_t lead_sz  = va - blk_va;
+            const uint32_t trail_va = va + alloc_sz;
+            const uint32_t trail_sz = static_cast<uint32_t>(blk_end - trail_va);
+
+            erase_free_block_locked(blk_va, blk_sz);
+            if (lead_sz > 0u) {
+                insert_free_block_locked(blk_va, lead_sz);
+            }
+            if (trail_sz > 0u) {
+                insert_free_block_locked(trail_va, trail_sz);
             }
             active_allocs_[va] = alloc_sz;
+            heap_used_bytes_ += alloc_sz;
             return va;
         }
     }
 
-    const uint32_t aligned = align_up(heap_cursor_, std::max<uint32_t>(align, 16u));
-    if (static_cast<uint64_t>(aligned) + alloc_sz > kLargeHeapLimit) {
-        return 0;
+    // Bump-allocate from heap_cursor_, preserving any alignment padding gap in free_blocks_
+    const uint64_t aligned64 = align_up_u64(heap_cursor_, eff_align);
+    if (aligned64 + alloc_sz > kLargeHeapLimit) {
+        return 0u;
     }
-    heap_cursor_ = aligned + alloc_sz;
-    active_allocs_[aligned] = alloc_sz;
-    return aligned;
+    const uint32_t va = static_cast<uint32_t>(aligned64);
+    if (va > heap_cursor_) {
+        insert_free_block_locked(heap_cursor_, va - heap_cursor_);
+    }
+    heap_cursor_ = va + alloc_sz;
+    active_allocs_[va] = alloc_sz;
+    heap_used_bytes_ += alloc_sz;
+    return va;
+}
+
+void GuestMemory::guest_free_locked(uint32_t va) {
+    if (va == 0u) return;
+    auto it = active_allocs_.find(va);
+    if (it == active_allocs_.end()) return;
+    const uint32_t sz = it->second;
+    active_allocs_.erase(it);
+    heap_used_bytes_ -= sz;
+    free_range_locked(va, sz);
+}
+
+uint32_t GuestMemory::guest_alloc(uint32_t size, uint32_t align) {
+    std::lock_guard<std::mutex> lock(alloc_mutex_);
+    return guest_alloc_locked(size, align);
 }
 
 uint32_t GuestMemory::guest_calloc(uint32_t count, uint32_t size) {
+    constexpr uint64_t kMaxHeapBytes = static_cast<uint64_t>(kLargeHeapLimit - kHeapBase);
     const uint64_t total = static_cast<uint64_t>(count) * static_cast<uint64_t>(size);
-    if (total > 0x08000000ull) return 0;
-    const uint32_t va = guest_alloc(static_cast<uint32_t>(total), 16u);
-    if (va != 0 && total > 0) {
-        zero_bytes(va, static_cast<size_t>(total));
+    if (total > kMaxHeapBytes) return 0u;
+    const uint32_t req = static_cast<uint32_t>(total);
+    const uint32_t alloc_sz = static_cast<uint32_t>(
+        align_up_u64(std::max<uint64_t>(req, kMinAllocAlign), kMinAllocAlign));
+    const uint32_t va = guest_alloc(req, kMinAllocAlign);
+    if (va != 0u) {
+        zero_bytes(va, alloc_sz);
     }
     return va;
 }
 
 uint32_t GuestMemory::guest_realloc(uint32_t va, uint32_t new_size) {
-    if (va == 0) return guest_alloc(new_size, 16u);
-    if (new_size == 0) {
+    if (va == 0u) return guest_alloc(new_size, kMinAllocAlign);
+    if (new_size == 0u) {
         guest_free(va);
-        return 0;
+        return 0u;
     }
 
-    uint32_t old_size = 0;
-    {
-        std::lock_guard<std::mutex> lock(alloc_mutex_);
-        auto it = active_allocs_.find(va);
-        if (it == active_allocs_.end()) return guest_alloc(new_size, 16u);
-        old_size = it->second;
-        if (new_size <= old_size) {
+    constexpr uint32_t kMaxHeapBytes = kLargeHeapLimit - kHeapBase;
+    if (new_size > kMaxHeapBytes) return 0u;
+    const uint64_t want_sz64 = align_up_u64(std::max<uint64_t>(new_size, kMinAllocAlign), kMinAllocAlign);
+    if (want_sz64 > kMaxHeapBytes) return 0u;
+    const uint32_t want_sz = static_cast<uint32_t>(want_sz64);
+
+    std::lock_guard<std::mutex> lock(alloc_mutex_);
+    if (base_ == nullptr) return 0u;
+
+    auto it = active_allocs_.find(va);
+    if (it == active_allocs_.end()) {
+        return guest_alloc_locked(new_size, kMinAllocAlign);
+    }
+
+    const uint32_t old_sz = it->second;
+    if (want_sz == old_sz) {
+        return va;
+    }
+
+    // Shrink in-place and immediately return trailing bytes to the coalescing free pool
+    if (want_sz < old_sz) {
+        const uint32_t excess = old_sz - want_sz;
+        it->second = want_sz;
+        heap_used_bytes_ -= excess;
+        free_range_locked(va + want_sz, excess);
+        return va;
+    }
+
+    // Expand in-place if at top of heap or followed by a sufficiently large free block
+    const uint32_t end_va     = va + old_sz;
+    const uint32_t need_extra = want_sz - old_sz;
+    if (end_va == heap_cursor_) {
+        if (static_cast<uint64_t>(va) + want_sz <= kLargeHeapLimit) {
+            heap_cursor_ = va + want_sz;
+            it->second = want_sz;
+            heap_used_bytes_ += need_extra;
             return va;
         }
+    } else if (auto fit = free_blocks_.find(end_va); fit != free_blocks_.end() && fit->second >= need_extra) {
+        const uint32_t next_sz = fit->second;
+        erase_free_block_locked(end_va, next_sz);
+        if (next_sz > need_extra) {
+            insert_free_block_locked(end_va + need_extra, next_sz - need_extra);
+        }
+        it->second = want_sz;
+        heap_used_bytes_ += need_extra;
+        return va;
     }
 
-    const uint32_t new_va = guest_alloc(new_size, 16u);
-    if (new_va == 0) return 0;
-    std::memcpy(base_ + new_va, base_ + va, std::min(old_size, new_size));
-    guest_free(va);
+    // Fallback: allocate new block, copy existing bytes, then release original block
+    const uint32_t new_va = guest_alloc_locked(new_size, kMinAllocAlign);
+    if (new_va == 0u) return 0u;
+    std::memcpy(base_ + new_va, base_ + va, old_sz);
+    active_allocs_.erase(va);
+    heap_used_bytes_ -= old_sz;
+    free_range_locked(va, old_sz);
     return new_va;
 }
 
 void GuestMemory::guest_free(uint32_t va) {
-    if (va == 0) return;
+    if (va == 0u) return;
     std::lock_guard<std::mutex> lock(alloc_mutex_);
-    auto it = active_allocs_.find(va);
-    if (it == active_allocs_.end()) return;
-    const uint32_t sz = it->second;
-    active_allocs_.erase(it);
-    free_blocks_.push_back(AllocBlock{va, sz});
+    guest_free_locked(va);
 }
 
 uint32_t GuestMemory::guest_msize(uint32_t va) const {
-    if (va == 0) return 0;
+    if (va == 0u) return 0u;
     std::lock_guard<std::mutex> lock(alloc_mutex_);
     auto it = active_allocs_.find(va);
     return (it != active_allocs_.end()) ? it->second : 0u;
 }
 
 uint32_t GuestMemory::alloc_thunk_block(uint32_t size, uint32_t align) {
-    if (base_ == nullptr || size == 0) return 0;
+    if (size == 0u) return 0u;
+    const uint32_t eff_align = normalize_align(align, 4u);
     std::lock_guard<std::mutex> lock(alloc_mutex_);
-    const uint32_t aligned = align_up(thunk_cursor_, std::max<uint32_t>(align, 4u));
+    if (base_ == nullptr) return 0u;
+    const uint64_t aligned = align_up_u64(thunk_cursor_, eff_align);
     if (aligned + size > kComThunkBase) {
-        return 0;
+        return 0u;
     }
-    thunk_cursor_ = aligned + size;
-    std::memset(base_ + aligned, 0, size);
-    return aligned;
+    const uint32_t va = static_cast<uint32_t>(aligned);
+    thunk_cursor_ = va + size;
+    std::memset(base_ + va, 0, size);
+    return va;
 }
 
 uint32_t GuestMemory::alloc_thread_stack() {
-    if (base_ == nullptr) return 0;
+    uint32_t stack_bottom = 0u;
     {
         std::lock_guard<std::mutex> lock(alloc_mutex_);
-        if (!free_thread_stacks_.empty()) {
-            const uint32_t stack_bottom = free_thread_stacks_.back();
-            free_thread_stacks_.pop_back();
-            std::memset(base_ + stack_bottom, 0, kThreadStackSize);
-            return stack_bottom + kThreadStackSize - 0x100u;
+        if (base_ == nullptr) return 0u;
+
+        // Pick the lowest free slot among the 16 fixed worker stacks to minimize dirty pages
+        for (uint32_t slot = 0u; slot < kThreadStackSlotCount; ++slot) {
+            const uint32_t bit = 1u << slot;
+            if ((active_thread_stack_mask_ & bit) == 0u) {
+                active_thread_stack_mask_ |= bit;
+                stack_bottom = kThreadStackBase + slot * kThreadStackSize;
+                break;
+            }
         }
-        if (thread_stack_cursor_ + kThreadStackSize <= kThreadStackLimit) {
-            const uint32_t stack_bottom = thread_stack_cursor_;
-            thread_stack_cursor_ += kThreadStackSize;
-            std::memset(base_ + stack_bottom, 0, kThreadStackSize);
-            return stack_bottom + kThreadStackSize - 0x100u;
+
+        // Overflow fallback when more than 16 worker threads are simultaneously alive
+        if (stack_bottom == 0u) {
+            stack_bottom = guest_alloc_locked(kThreadStackSize, kMinAllocAlign);
+            if (stack_bottom == 0u) return 0u;
+            active_overflow_stacks_.insert(stack_bottom);
         }
     }
-    // Overflow fallback when more than 16 worker threads are simultaneously alive.
-    const uint32_t heap_buf = guest_alloc(kThreadStackSize, 16u);
-    if (heap_buf == 0u) return 0u;
-    std::memset(base_ + heap_buf, 0, kThreadStackSize);
-    return heap_buf + kThreadStackSize - 0x100u;
+
+    zero_bytes(stack_bottom, kThreadStackSize);
+    return stack_bottom + kThreadStackSize - 0x100u;
 }
 
 void GuestMemory::free_thread_stack(uint32_t initial_esp) {
-    if (base_ == nullptr || initial_esp < kThreadStackSize - 0x100u) return;
+    if (initial_esp < kThreadStackSize - 0x100u || initial_esp >= kArenaSize) return;
     const uint32_t stack_bottom = initial_esp + 0x100u - kThreadStackSize;
+
+    std::lock_guard<std::mutex> lock(alloc_mutex_);
+    if (base_ == nullptr) return;
+
     if (stack_bottom >= kThreadStackBase &&
         stack_bottom < kThreadStackLimit &&
         ((stack_bottom - kThreadStackBase) % kThreadStackSize) == 0u) {
-        std::lock_guard<std::mutex> lock(alloc_mutex_);
-        free_thread_stacks_.push_back(stack_bottom);
+        const uint32_t slot = (stack_bottom - kThreadStackBase) / kThreadStackSize;
+        const uint32_t bit = 1u << slot;
+        if ((active_thread_stack_mask_ & bit) == 0u) {
+            return; // Ignore double-free / unallocated slot
+        }
+        active_thread_stack_mask_ &= ~bit;
         return;
     }
+
     if (stack_bottom >= kHeapBase) {
-        guest_free(stack_bottom);
+        auto oit = active_overflow_stacks_.find(stack_bottom);
+        if (oit == active_overflow_stacks_.end()) {
+            return; // Ignore double-free or invalid ESP not owned as an overflow thread stack
+        }
+        active_overflow_stacks_.erase(oit);
+        guest_free_locked(stack_bottom);
     }
 }
 
 uint32_t GuestMemory::heap_used_bytes() const noexcept {
     std::lock_guard<std::mutex> lock(alloc_mutex_);
-    uint32_t used = 0;
-    for (const auto& kv : active_allocs_) {
-        used += kv.second;
-    }
-    return used;
+    return heap_used_bytes_;
 }
 
 } // namespace mbaa_recomp

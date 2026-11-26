@@ -1654,21 +1654,43 @@ void hle_crt_004e1f28(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t start_va  = ctx.arg32(mem, 2);
     const uint32_t arglist   = ctx.arg32(mem, 3);
     const uint32_t thrd_addr = ctx.arg32(mem, 5);
+    if (start_va == 0u) {
+        ctx.eax = 0u;
+        ctx.ret_cdecl(mem);
+        return;
+    }
     const uint32_t child_esp = mem.alloc_thread_stack();
-    if (start_va == 0u || child_esp == 0u) {
+    if (child_esp == 0u) {
         ctx.eax = 0u;
         ctx.ret_cdecl(mem);
         return;
     }
     if (thrd_addr != 0u) mem.w32(thrd_addr, 0x3000u);
     GuestMemory* mptr = &mem;
-    std::thread([mptr, start_va, arglist, child_esp]() {
-        CpuContext tctx;
-        tctx.reset(child_esp, GuestMemory::kTebBase);
-        tctx.push32(*mptr, arglist);
-        tctx.push32(*mptr, 0x00FFFFF6u);
-        call_indirect(tctx, *mptr, start_va);
-    }).detach();
+    try {
+        std::thread([mptr, start_va, arglist, child_esp]() {
+            struct ThreadStackGuard {
+                GuestMemory* mem_ptr;
+                uint32_t esp;
+                ~ThreadStackGuard() {
+                    if (mem_ptr != nullptr && esp != 0u) {
+                        mem_ptr->free_thread_stack(esp);
+                    }
+                }
+            } stack_guard{mptr, child_esp};
+
+            CpuContext tctx;
+            tctx.reset(child_esp, GuestMemory::kTebBase);
+            tctx.push32(*mptr, arglist);
+            tctx.push32(*mptr, 0x00FFFFF6u);
+            call_indirect(tctx, *mptr, start_va);
+        }).detach();
+    } catch (...) {
+        mem.free_thread_stack(child_esp);
+        ctx.eax = 0u;
+        ctx.ret_cdecl(mem);
+        return;
+    }
     ctx.eax = 0x20009001u;
     ctx.ret_cdecl(mem);
 }
@@ -1996,14 +2018,24 @@ void hle_crt_004f49a0(CpuContext& ctx, GuestMemory& mem) {
 
     // Allocate guest vorbis_info struct (32 bytes): [0]=version(0), [4]=channels, [8]=rate
     st->info_guest_va = mem.guest_calloc(1u, 32u);
-    mem.w32(st->info_guest_va + 0u, 0u);
-    mem.w32(st->info_guest_va + 4u, st->channels);
-    mem.w32(st->info_guest_va + 8u, st->sample_rate);
+    if (st->info_guest_va != 0u) {
+        mem.w32(st->info_guest_va + 0u, 0u);
+        mem.w32(st->info_guest_va + 4u, st->channels);
+        mem.w32(st->info_guest_va + 8u, st->sample_rate);
+    }
     mem.w32(vf_va + 4u, 1u); // seekable flag expected by MBAA.exe
 
+    uint32_t old_info_va = 0u;
     {
         std::lock_guard<std::mutex> lock(g_vorbis_mutex);
+        auto prev_it = g_vorbis_streams.find(vf_va);
+        if (prev_it != g_vorbis_streams.end() && prev_it->second) {
+            old_info_va = prev_it->second->info_guest_va;
+        }
         g_vorbis_streams[vf_va] = st;
+    }
+    if (old_info_va != 0u) {
+        mem.guest_free(old_info_va);
     }
 
     ctx.eax = 0u;
