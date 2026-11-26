@@ -994,6 +994,8 @@ struct D3D9MetalBridge::Impl {
     uint32_t fill_scratch_va     = 0;
     uint32_t font_scratch_tex_id = 0;
     uint32_t font_scratch_tex_va = 0;
+    uint32_t patched_fontl_va    = 0;
+    uint32_t patched_fonts_va    = 0;
     uint32_t next_handle_id      = 1;
 
     std::unordered_map<uint32_t, TextureRecord> textures; // handle_id -> TextureRecord
@@ -2776,9 +2778,224 @@ void com_dev_get_depth_stencil(CpuContext& ctx, GuestMemory& mem) {
     ctx.ret_stdcall(mem, 8u);
 }
 
+// ---------------------------------------------------------------------------
+// Pure-BYOC Bitmap .fnt Japanese Fallback Merger
+// ---------------------------------------------------------------------------
+// Community Edition's 0008.p overrides .\fontl.fnt [0x00562A28] and .\fonts.fnt
+// [0x00562A2C] with 10x24 Latin-only 4bpp bitmap fonts (345 glyphs; all Japanese
+// kana/kanji/punctuation entries are 0xFFFF), while 50 untranslated story and
+// win-quote scripts in 0007.p (e.g. Nanaya Shiki, Roa, Aka Akiha, Neco-Arc)
+// remain Shift-JIS Japanese. Meanwhile sub_0041e0c0 already loads the user's own
+// full 7,724-glyph 24x24 Japanese .\font.fnt from 0004.p into [0x00562A30].
+// When a 4bpp .fnt in [0x00562A28]/[0x00562A2C] is missing glyphs present in
+// [0x00562A30], we preserve every existing glyph byte-for-byte and append
+// area-resampled fallback glyphs from [0x00562A30] into a merged guest buffer.
+uint32_t merge_bitmap_fnt_with_jp_fallback(
+    GuestMemory& mem,
+    uint32_t target_va,
+    uint32_t jp_src_va,
+    const char* label)
+{
+    constexpr uint32_t kHdrBytes     = 8u;
+    constexpr uint32_t kTableBytes   = 0xFDFEu;
+    constexpr uint32_t kTableEntries = kTableBytes / 2u; // 32511 Shift-JIS slots
+    constexpr uint32_t kPixOff       = kHdrBytes + kTableBytes; // 0xFE06
+
+    if (target_va == 0u || jp_src_va == 0u || target_va == jp_src_va) return target_va;
+    if (!mem.in_bounds(target_va, kPixOff) || !mem.in_bounds(jp_src_va, kPixOff)) return target_va;
+
+    const uint16_t dst_w0  = mem.r16(target_va + 0u);
+    const uint16_t dst_w   = mem.r16(target_va + 2u);
+    const uint16_t dst_h   = mem.r16(target_va + 4u);
+    const uint8_t  dst_ppb = mem.r8(target_va + 6u);
+    const uint8_t  dst_bpp = mem.r8(target_va + 7u);
+
+    const uint16_t src_w   = mem.r16(jp_src_va + 2u);
+    const uint16_t src_h   = mem.r16(jp_src_va + 4u);
+    const uint8_t  src_ppb = mem.r8(jp_src_va + 6u);
+    const uint8_t  src_bpp = mem.r8(jp_src_va + 7u);
+
+    if (dst_ppb != 2u || dst_bpp != 4u || src_ppb != 2u || src_bpp != 4u) return target_va;
+    if (dst_w < 4u || dst_w > 64u || dst_h < 4u || dst_h > 64u || (dst_w & 1u) != 0u) return target_va;
+    if (src_w < 4u || src_w > 64u || src_h < 4u || src_h > 64u || (src_w & 1u) != 0u) return target_va;
+
+    const uint8_t* dst_base = mem.cptr(target_va);
+    const uint8_t* src_base = mem.cptr(jp_src_va);
+    const uint8_t* dst_tbl  = dst_base + kHdrBytes;
+    const uint8_t* src_tbl  = src_base + kHdrBytes;
+
+    int32_t max_dst_g = -1;
+    int32_t max_src_g = -1;
+    uint32_t missing_slots = 0u;
+    for (uint32_t i = 0u; i < kTableEntries; ++i) {
+        const uint16_t dg = read_u16_le_buf(dst_tbl + i * 2u);
+        const uint16_t sg = read_u16_le_buf(src_tbl + i * 2u);
+        if (dg != 0xFFFFu && static_cast<int32_t>(dg) > max_dst_g) max_dst_g = static_cast<int32_t>(dg);
+        if (sg != 0xFFFFu && static_cast<int32_t>(sg) > max_src_g) max_src_g = static_cast<int32_t>(sg);
+        if (dg == 0xFFFFu && sg != 0xFFFFu) ++missing_slots;
+    }
+    if (missing_slots == 0u || max_src_g < 0) return target_va;
+
+    const uint32_t existing_dst_glyphs = static_cast<uint32_t>(max_dst_g + 1);
+    const uint32_t src_glyph_count     = static_cast<uint32_t>(max_src_g + 1);
+    const uint32_t dst_row_bytes       = dst_w / 2u;
+    const uint32_t src_row_bytes       = src_w / 2u;
+    const uint32_t dst_glyph_bytes     = dst_row_bytes * dst_h;
+    const uint32_t src_glyph_bytes     = src_row_bytes * src_h;
+
+    const uint32_t existing_dst_total = kPixOff + existing_dst_glyphs * dst_glyph_bytes;
+    const uint32_t existing_src_total = kPixOff + src_glyph_count * src_glyph_bytes;
+    if (!mem.in_bounds(target_va, existing_dst_total) || !mem.in_bounds(jp_src_va, existing_src_total)) {
+        return target_va;
+    }
+
+    std::unordered_map<uint16_t, uint16_t> src_to_new_dst;
+    src_to_new_dst.reserve(missing_slots);
+    std::vector<uint16_t> ordered_src_glyphs;
+    ordered_src_glyphs.reserve(missing_slots);
+    uint32_t next_glyph_idx = existing_dst_glyphs;
+    for (uint32_t i = 0u; i < kTableEntries; ++i) {
+        const uint16_t dg = read_u16_le_buf(dst_tbl + i * 2u);
+        const uint16_t sg = read_u16_le_buf(src_tbl + i * 2u);
+        if (dg == 0xFFFFu && sg != 0xFFFFu) {
+            if (src_to_new_dst.find(sg) == src_to_new_dst.end()) {
+                if (next_glyph_idx >= 0xFFFEu) break;
+                src_to_new_dst[sg] = static_cast<uint16_t>(next_glyph_idx++);
+                ordered_src_glyphs.push_back(sg);
+            }
+        }
+    }
+    if (ordered_src_glyphs.empty()) return target_va;
+
+    const uint32_t new_total_bytes = kPixOff + next_glyph_idx * dst_glyph_bytes;
+    const uint32_t new_va = mem.guest_alloc(new_total_bytes, 16u);
+    if (new_va == 0u || !mem.in_bounds(new_va, new_total_bytes)) {
+        if (new_va != 0u) mem.guest_free(new_va);
+        return target_va;
+    }
+
+    // Re-fetch host pointers after guest_alloc (arena is fixed-size, still safe practice)
+    const uint8_t* src_pix = mem.cptr(jp_src_va) + kPixOff;
+    uint8_t* out_base      = mem.ptr(new_va);
+    std::memcpy(out_base, mem.cptr(target_va), existing_dst_total);
+
+    const uint16_t new_w0 = static_cast<uint16_t>(std::max<uint32_t>(dst_w0, next_glyph_idx));
+    out_base[0] = static_cast<uint8_t>(new_w0 & 0xFFu);
+    out_base[1] = static_cast<uint8_t>((new_w0 >> 8) & 0xFFu);
+
+    // Patch Shift-JIS lookup table for missing glyphs
+    uint8_t* out_tbl = out_base + kHdrBytes;
+    const uint8_t* src_tbl_now = mem.cptr(jp_src_va) + kHdrBytes;
+    uint32_t patched_slots = 0u;
+    for (uint32_t i = 0u; i < kTableEntries; ++i) {
+        if (read_u16_le_buf(out_tbl + i * 2u) == 0xFFFFu) {
+            const uint16_t sg = read_u16_le_buf(src_tbl_now + i * 2u);
+            if (auto it = src_to_new_dst.find(sg); it != src_to_new_dst.end()) {
+                out_tbl[i * 2u + 0u] = static_cast<uint8_t>(it->second & 0xFFu);
+                out_tbl[i * 2u + 1u] = static_cast<uint8_t>((it->second >> 8) & 0xFFu);
+                ++patched_slots;
+            }
+        }
+    }
+
+    // Area-resample each missing source 4bpp glyph into target cell dimensions
+    const float scale_x = static_cast<float>(src_w) / static_cast<float>(dst_w);
+    const float scale_y = static_cast<float>(src_h) / static_cast<float>(dst_h);
+    uint8_t* out_pix = out_base + kPixOff;
+
+    for (uint32_t k = 0u; k < ordered_src_glyphs.size(); ++k) {
+        const uint16_t sg = ordered_src_glyphs[k];
+        const uint32_t dg = existing_dst_glyphs + k;
+        const uint8_t* sg_ptr = src_pix + static_cast<size_t>(sg) * src_glyph_bytes;
+        uint8_t* dg_ptr       = out_pix + static_cast<size_t>(dg) * dst_glyph_bytes;
+
+        for (uint32_t dy = 0u; dy < dst_h; ++dy) {
+            const float sy0 = static_cast<float>(dy) * scale_y;
+            const float sy1 = sy0 + scale_y;
+            const int iy0 = std::max(0, static_cast<int>(std::floor(sy0)));
+            const int iy1 = std::min(static_cast<int>(src_h) - 1, static_cast<int>(std::floor(sy1)));
+
+            for (uint32_t dx = 0u; dx < dst_w; dx += 2u) {
+                uint8_t nib[2] = {0u, 0u};
+                for (uint32_t p = 0u; p < 2u; ++p) {
+                    const float sx0 = static_cast<float>(dx + p) * scale_x;
+                    const float sx1 = sx0 + scale_x;
+                    const int ix0 = std::max(0, static_cast<int>(std::floor(sx0)));
+                    const int ix1 = std::min(static_cast<int>(src_w) - 1, static_cast<int>(std::floor(sx1)));
+
+                    float acc = 0.0f;
+                    float wsum = 0.0f;
+                    uint8_t peak = 0u;
+                    for (int sy = iy0; sy <= iy1; ++sy) {
+                        const float ovy = std::min(static_cast<float>(sy + 1), sy1) - std::max(static_cast<float>(sy), sy0);
+                        if (ovy <= 0.0f) continue;
+                        const uint8_t* srow = sg_ptr + static_cast<size_t>(sy) * src_row_bytes;
+                        for (int sx = ix0; sx <= ix1; ++sx) {
+                            const float ovx = std::min(static_cast<float>(sx + 1), sx1) - std::max(static_cast<float>(sx), sx0);
+                            if (ovx <= 0.0f) continue;
+                            const uint8_t b = srow[sx >> 1];
+                            const uint8_t v = ((sx & 1) == 0) ? static_cast<uint8_t>(b >> 4) : static_cast<uint8_t>(b & 0x0Fu);
+                            const float w = ovx * ovy;
+                            acc += static_cast<float>(v) * w;
+                            wsum += w;
+                            if (v > peak) peak = v;
+                        }
+                    }
+                    const float avg = (wsum > 0.0f) ? (acc / wsum) : 0.0f;
+                    const int blended = static_cast<int>(std::lround(avg * 0.85f + static_cast<float>(peak) * 0.15f));
+                    nib[p] = static_cast<uint8_t>(std::clamp(blended, 0, 15));
+                }
+                dg_ptr[dy * dst_row_bytes + (dx >> 1)] = static_cast<uint8_t>((nib[0] << 4) | nib[1]);
+            }
+        }
+    }
+
+    hle_win32_log("[font] Merged %u missing JP glyphs (%u slots, %ux%u -> %ux%u) into %s (0x%08x -> 0x%08x)",
+                  static_cast<uint32_t>(ordered_src_glyphs.size()), patched_slots,
+                  src_w, src_h, dst_w, dst_h, label, target_va, new_va);
+    return new_va;
+}
+
+void ensure_bitmap_fonts_merged_with_jp_fallback(D3D9MetalBridge::Impl& im, GuestMemory& mem) {
+    constexpr uint32_t kFontLargeVa  = 0x00562A28u;
+    constexpr uint32_t kFontSmallVa  = 0x00562A2Cu;
+    constexpr uint32_t kFontJpBaseVa = 0x00562A30u;
+
+    if (!mem.in_bounds(kFontLargeVa, 12u)) return;
+    const uint32_t fontl_va  = mem.r32(kFontLargeVa);
+    const uint32_t fonts_va  = mem.r32(kFontSmallVa);
+    const uint32_t fontjp_va = mem.r32(kFontJpBaseVa);
+    if (fontjp_va == 0u) return;
+    if (fontl_va == im.patched_fontl_va && fonts_va == im.patched_fonts_va) return;
+
+    if (fontl_va != 0u && fontl_va != im.patched_fontl_va) {
+        const uint32_t merged = merge_bitmap_fnt_with_jp_fallback(mem, fontl_va, fontjp_va, "fontl.fnt");
+        if (merged != fontl_va) {
+            mem.w32(kFontLargeVa, merged);
+            if (fontl_va != fonts_va && fontl_va != fontjp_va) {
+                mem.guest_free(fontl_va);
+            }
+        }
+        im.patched_fontl_va = merged;
+    }
+
+    const uint32_t cur_fontl_va = mem.r32(kFontLargeVa);
+    if (fonts_va != 0u && fonts_va != im.patched_fonts_va) {
+        const uint32_t merged = merge_bitmap_fnt_with_jp_fallback(mem, fonts_va, fontjp_va, "fonts.fnt");
+        if (merged != fonts_va) {
+            mem.w32(kFontSmallVa, merged);
+            if (fonts_va != cur_fontl_va && fonts_va != fontjp_va) {
+                mem.guest_free(fonts_va);
+            }
+        }
+        im.patched_fonts_va = merged;
+    }
+}
+
 void com_dev_begin_scene(CpuContext& ctx, GuestMemory& mem) {
     if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        ensure_bitmap_fonts_merged_with_jp_fallback(*im, mem);
         im->in_scene = true;
     }
     ctx.eax = kS_OK;
@@ -3911,8 +4128,188 @@ void com_fx_end(CpuContext& ctx, GuestMemory& mem) {
 }
 
 // ---------------------------------------------------------------------------
-// ID3DXFont::DrawTextA (CoreText Shift-JIS CP932 / UTF-8 Rasterizer -> Metal)
+// ID3DXFont::DrawTextA / DrawTextW (CoreText Shift-JIS CP932 / UTF-16 -> Metal)
 // ---------------------------------------------------------------------------
+CTFontRef create_d3dx_ct_font(int32_t height, uint32_t weight) {
+    const CGFloat px = static_cast<CGFloat>(std::clamp(height > 0 ? height : 14, 8, 96));
+    CFStringRef name = (weight >= 600u) ? CFSTR("HiraginoSans-W6") : CFSTR("HiraginoSans-W3");
+    CTFontRef font = CTFontCreateWithName(name, px, nullptr);
+    if (!font) {
+        font = CTFontCreateUIFontForLanguage(kCTFontUIFontSystem, px, CFSTR("ja"));
+    }
+    return font;
+}
+
+int32_t draw_d3dx_font_nsstring(
+    D3D9MetalBridge::Impl& im,
+    GuestMemory& mem,
+    FontRecord* fr,
+    NSString* nsStr,
+    uint32_t rect_va,
+    uint32_t format,
+    uint32_t color)
+{
+    int32_t out_height = (fr && fr->height > 0) ? fr->height : 16;
+    if (!nsStr || nsStr.length == 0) return out_height;
+
+    CTFontRef font = (fr && fr->ct_font) ? fr->ct_font : create_d3dx_ct_font(out_height, fr ? fr->weight : 400u);
+    if (!font) return out_height;
+
+    const uint8_t ca = (color >> 24) & 0xFFu;
+    const uint8_t cr = (color >> 16) & 0xFFu;
+    const uint8_t cg = (color >> 8)  & 0xFFu;
+    const uint8_t cb = color & 0xFFu;
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    const CGFloat rgba[4] = {cr / 255.0, cg / 255.0, cb / 255.0, ca / 255.0};
+    CGColorRef cgCol = cs ? CGColorCreate(cs, rgba) : nullptr;
+    if (!cs || !cgCol) {
+        if (cgCol) CGColorRelease(cgCol);
+        if (cs) CGColorSpaceRelease(cs);
+        if (!(fr && fr->ct_font)) CFRelease(font);
+        return out_height;
+    }
+
+    NSDictionary* attrs = @{
+        (__bridge id)kCTFontAttributeName: (__bridge id)font,
+        (__bridge id)kCTForegroundColorAttributeName: (__bridge id)cgCol
+    };
+    NSAttributedString* attrStr = [[NSAttributedString alloc] initWithString:nsStr attributes:attrs];
+    CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)attrStr);
+    if (!line) {
+        CGColorRelease(cgCol);
+        CGColorSpaceRelease(cs);
+        if (!(fr && fr->ct_font)) CFRelease(font);
+        return out_height;
+    }
+    CGFloat ascent = 0, descent = 0, leading = 0;
+    const double line_w = CTLineGetTypographicBounds(line, &ascent, &descent, &leading);
+    const uint32_t tex_w = std::max<uint32_t>(4u, static_cast<uint32_t>(std::ceil(line_w)) + 2u);
+    const uint32_t tex_h = std::max<uint32_t>(4u, static_cast<uint32_t>(std::ceil(ascent + descent)) + 2u);
+    out_height = static_cast<int32_t>(tex_h);
+
+    int32_t rx = 0, ry = 0, rw = static_cast<int32_t>(tex_w), rh = static_cast<int32_t>(tex_h);
+    if (rect_va && mem.in_bounds(rect_va, 16u)) {
+        rx = static_cast<int32_t>(mem.r32(rect_va + 0u));
+        ry = static_cast<int32_t>(mem.r32(rect_va + 4u));
+        const int32_t rr = static_cast<int32_t>(mem.r32(rect_va + 8u));
+        const int32_t rb = static_cast<int32_t>(mem.r32(rect_va + 12u));
+        if (format & 0x00000400u) { // DT_CALCRECT
+            mem.w32(rect_va + 8u,  static_cast<uint32_t>(rx + static_cast<int32_t>(tex_w)));
+            mem.w32(rect_va + 12u, static_cast<uint32_t>(ry + static_cast<int32_t>(tex_h)));
+        } else if (rr > rx && rb > ry) {
+            rw = rr - rx;
+            rh = rb - ry;
+            if (format & 1u) rx += (rw - static_cast<int32_t>(tex_w)) / 2; // DT_CENTER
+            if (format & 2u) rx = rr - static_cast<int32_t>(tex_w);      // DT_RIGHT
+            if (format & 4u) ry += (rh - static_cast<int32_t>(tex_h)) / 2; // DT_VCENTER
+        }
+    }
+
+    if ((format & 0x00000400u) == 0u) {
+        std::vector<uint8_t> buf(static_cast<size_t>(tex_w) * tex_h * 4u, 0u);
+        CGContextRef cgCtx = CGBitmapContextCreate(
+            buf.data(), tex_w, tex_h, 8, tex_w * 4u, cs,
+            static_cast<uint32_t>(kCGImageAlphaPremultipliedLast) | kCGBitmapByteOrder32Big);
+        if (cgCtx != nullptr) {
+            CGContextSetTextPosition(cgCtx, 1.0, descent + 1.0);
+            CTLineDraw(line, cgCtx);
+            CGContextRelease(cgCtx);
+
+            id<MTLTexture> glyphTex = im.make_mtl_texture(tex_w, tex_h, MTLPixelFormatRGBA8Unorm, false, false);
+            if (glyphTex != nil) {
+                [glyphTex replaceRegion:MTLRegionMake2D(0, 0, tex_w, tex_h)
+                            mipmapLevel:0
+                              withBytes:buf.data()
+                            bytesPerRow:tex_w * 4u];
+
+                // Submit textured screen quad through clean fixed-function pipeline state
+                const uint32_t saved_fvf         = im.current_fvf;
+                const uint32_t saved_fx_id       = im.active_effect_id;
+                const MbaaShaderPassId saved_pass = im.active_pass;
+                const uint32_t saved_colorop0    = im.tss_stage0_colorop[0];
+                const uint32_t saved_alphaop0    = im.tss_stage0_alphaop[0];
+                const uint32_t saved_blend       = im.render_states[kRsAlphaBlendEnable];
+                const uint32_t saved_src         = im.render_states[kRsSrcBlend];
+                const uint32_t saved_dst         = im.render_states[kRsDestBlend];
+                const uint32_t saved_blendop     = im.render_states[kRsBlendOp];
+                const uint32_t saved_sep_alpha   = im.render_states[kRsSeparateAlphaBlendEnable];
+                const uint32_t saved_atest       = im.render_states[kRsAlphaTestEnable];
+                const uint32_t saved_cull        = im.render_states[kRsCullMode];
+                const uint32_t saved_zen         = im.render_states[kRsZEnable];
+                const uint32_t saved_zwrite      = im.render_states[kRsZWriteEnable];
+                const uint32_t saved_tex0        = im.bound_textures[0];
+
+                if (im.font_scratch_tex_va == 0u) {
+                    im.font_scratch_tex_id = ++im.next_handle_id;
+                    im.font_scratch_tex_va = im.alloc_com_object(
+                        mem, im.vtbl_texture, im.font_scratch_tex_id, kKindTexture);
+                }
+                TextureRecord tmp_rec{};
+                tmp_rec.id = im.font_scratch_tex_id;
+                tmp_rec.width = tex_w; tmp_rec.height = tex_h;
+                tmp_rec.mtl_tex = glyphTex;
+                tmp_rec.guest_va = im.font_scratch_tex_va;
+                im.textures[tmp_rec.id] = tmp_rec;
+
+                struct QuadVert { float x, y, z, rhw; uint32_t diff, spec; float u, v; };
+                // Offset by -0.5f so vs_mbaa_main's +0.5f DX9 RHW adjustment lands on exact pixel boundaries
+                const float x0 = static_cast<float>(rx) - 0.5f;
+                const float y0 = static_cast<float>(ry) - 0.5f;
+                const float x1 = x0 + static_cast<float>(tex_w);
+                const float y1 = y0 + static_cast<float>(tex_h);
+                QuadVert qv[4] = {
+                    {x0, y0, 0.0f, 1.0f, 0xFFFFFFFFu, 0u, 0.0f, 0.0f},
+                    {x1, y0, 0.0f, 1.0f, 0xFFFFFFFFu, 0u, 1.0f, 0.0f},
+                    {x0, y1, 0.0f, 1.0f, 0xFFFFFFFFu, 0u, 0.0f, 1.0f},
+                    {x1, y1, 0.0f, 1.0f, 0xFFFFFFFFu, 0u, 1.0f, 1.0f},
+                };
+
+                im.current_fvf                        = 0x000001C4u;
+                im.active_effect_id                   = 0u;
+                im.active_pass                        = MBAA_PASS_FIXED_2D;
+                im.tss_stage0_colorop[0]              = 4u; // D3DTOP_MODULATE
+                im.tss_stage0_alphaop[0]              = 4u; // D3DTOP_MODULATE
+                im.render_states[kRsAlphaBlendEnable] = 1u;
+                im.render_states[kRsSrcBlend]         = 2u; // ONE (premultiplied from CGContext)
+                im.render_states[kRsDestBlend]        = 6u; // INVSRCALPHA
+                im.render_states[kRsBlendOp]                  = 1u; // ADD
+                im.render_states[kRsSeparateAlphaBlendEnable] = 0u;
+                im.render_states[kRsAlphaTestEnable]          = 0u;
+                im.render_states[kRsCullMode]         = 1u; // NONE
+                im.render_states[kRsZEnable]          = 0u;
+                im.render_states[kRsZWriteEnable]     = 0u;
+                im.bound_textures[0]                  = tmp_rec.guest_va;
+                im.execute_draw(mem, kPtTriangleStrip, 2u,
+                                reinterpret_cast<const uint8_t*>(qv), 4u, sizeof(QuadVert),
+                                nullptr, 0u);
+
+                im.textures.erase(tmp_rec.id);
+                im.current_fvf                        = saved_fvf;
+                im.active_effect_id                   = saved_fx_id;
+                im.active_pass                        = saved_pass;
+                im.tss_stage0_colorop[0]              = saved_colorop0;
+                im.tss_stage0_alphaop[0]              = saved_alphaop0;
+                im.render_states[kRsAlphaBlendEnable] = saved_blend;
+                im.render_states[kRsSrcBlend]         = saved_src;
+                im.render_states[kRsDestBlend]        = saved_dst;
+                im.render_states[kRsBlendOp]                  = saved_blendop;
+                im.render_states[kRsSeparateAlphaBlendEnable] = saved_sep_alpha;
+                im.render_states[kRsAlphaTestEnable]          = saved_atest;
+                im.render_states[kRsCullMode]         = saved_cull;
+                im.render_states[kRsZEnable]          = saved_zen;
+                im.render_states[kRsZWriteEnable]     = saved_zwrite;
+                im.bound_textures[0]                  = saved_tex0;
+            }
+        }
+    }
+
+    if (line) CFRelease(line);
+    if (cgCol) CGColorRelease(cgCol);
+    if (cs) CGColorSpaceRelease(cs);
+    if (!(fr && fr->ct_font)) CFRelease(font);
+    return out_height;
+}
+
 void com_font_draw_text_a(CpuContext& ctx, GuestMemory& mem) {
     // (this, pSprite, pString, Count, pRect, Format, Color) -> 28 bytes
     const uint32_t font_va  = ctx.arg32(mem, 0);
@@ -3922,8 +4319,14 @@ void com_font_draw_text_a(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t format   = ctx.arg32(mem, 5);
     const uint32_t color    = ctx.arg32(mem, 6);
 
+    if (count == 0 || str_va == 0u) {
+        ctx.eax = 0u;
+        ctx.ret_stdcall(mem, 28u);
+        return;
+    }
+
     int32_t out_height = 16;
-    if (auto* im = active_impl(); im && str_va != 0u) {
+    if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
         FontRecord* fr = im->find_font_by_va(mem, font_va);
         std::string raw = mem.read_cstring(str_va, count > 0 ? static_cast<size_t>(count) : 1024u);
@@ -3938,119 +4341,47 @@ void com_font_draw_text_a(CpuContext& ctx, GuestMemory& mem) {
                 if (!nsStr) {
                     nsStr = [NSString stringWithUTF8String:raw.c_str()];
                 }
-                if (nsStr && nsStr.length > 0) {
-                    CTFontRef font = (fr && fr->ct_font) ? fr->ct_font
-                                   : CTFontCreateWithName(CFSTR("HiraginoSans-W3"), 14.0, nullptr);
-                    const uint8_t ca = (color >> 24) & 0xFFu;
-                    const uint8_t cr = (color >> 16) & 0xFFu;
-                    const uint8_t cg = (color >> 8)  & 0xFFu;
-                    const uint8_t cb = color & 0xFFu;
-                    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-                    const CGFloat rgba[4] = {cr / 255.0, cg / 255.0, cb / 255.0, ca / 255.0};
-                    CGColorRef cgCol = CGColorCreate(cs, rgba);
+                out_height = draw_d3dx_font_nsstring(*im, mem, fr, nsStr, rect_va, format, color);
+            }
+        }
+    }
+    ctx.eax = static_cast<uint32_t>(out_height);
+    ctx.ret_stdcall(mem, 28u);
+}
 
-                    NSDictionary* attrs = @{
-                        (__bridge id)kCTFontAttributeName: (__bridge id)font,
-                        (__bridge id)kCTForegroundColorAttributeName: (__bridge id)cgCol
-                    };
-                    NSAttributedString* attrStr = [[NSAttributedString alloc] initWithString:nsStr attributes:attrs];
-                    CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)attrStr);
-                    CGFloat ascent = 0, descent = 0, leading = 0;
-                    const double line_w = CTLineGetTypographicBounds(line, &ascent, &descent, &leading);
-                    const uint32_t tex_w = std::max<uint32_t>(4u, static_cast<uint32_t>(std::ceil(line_w)) + 2u);
-                    const uint32_t tex_h = std::max<uint32_t>(4u, static_cast<uint32_t>(std::ceil(ascent + descent)) + 2u);
-                    out_height = static_cast<int32_t>(tex_h);
+void com_font_draw_text_w(CpuContext& ctx, GuestMemory& mem) {
+    // (this, pSprite, pStringW, Count, pRect, Format, Color) -> 28 bytes
+    const uint32_t font_va  = ctx.arg32(mem, 0);
+    const uint32_t str_va   = ctx.arg32(mem, 2);
+    const int32_t  count    = static_cast<int32_t>(ctx.arg32(mem, 3));
+    const uint32_t rect_va  = ctx.arg32(mem, 4);
+    const uint32_t format   = ctx.arg32(mem, 5);
+    const uint32_t color    = ctx.arg32(mem, 6);
 
-                    int32_t rx = 0, ry = 0, rw = static_cast<int32_t>(tex_w), rh = static_cast<int32_t>(tex_h);
-                    if (rect_va && mem.in_bounds(rect_va, 16u)) {
-                        rx = static_cast<int32_t>(mem.r32(rect_va + 0u));
-                        ry = static_cast<int32_t>(mem.r32(rect_va + 4u));
-                        const int32_t rr = static_cast<int32_t>(mem.r32(rect_va + 8u));
-                        const int32_t rb = static_cast<int32_t>(mem.r32(rect_va + 12u));
-                        if (format & 0x00000400u) { // DT_CALCRECT
-                            mem.w32(rect_va + 8u,  static_cast<uint32_t>(rx + static_cast<int32_t>(tex_w)));
-                            mem.w32(rect_va + 12u, static_cast<uint32_t>(ry + static_cast<int32_t>(tex_h)));
-                        } else if (rr > rx && rb > ry) {
-                            rw = rr - rx;
-                            rh = rb - ry;
-                            if (format & 1u) rx += (rw - static_cast<int32_t>(tex_w)) / 2; // DT_CENTER
-                            if (format & 2u) rx = rr - static_cast<int32_t>(tex_w);      // DT_RIGHT
-                            if (format & 4u) ry += (rh - static_cast<int32_t>(tex_h)) / 2; // DT_VCENTER
-                        }
-                    }
+    if (count == 0 || str_va == 0u) {
+        ctx.eax = 0u;
+        ctx.ret_stdcall(mem, 28u);
+        return;
+    }
 
-                    if ((format & 0x00000400u) == 0u) {
-                        std::vector<uint8_t> buf(static_cast<size_t>(tex_w) * tex_h * 4u, 0u);
-                        CGContextRef cgCtx = CGBitmapContextCreate(
-                            buf.data(), tex_w, tex_h, 8, tex_w * 4u, cs,
-                            static_cast<uint32_t>(kCGImageAlphaPremultipliedLast) | kCGBitmapByteOrder32Big);
-                        if (cgCtx != nullptr) {
-                            CGContextSetTextPosition(cgCtx, 1.0, descent + 1.0);
-                            CTLineDraw(line, cgCtx);
-                            CGContextRelease(cgCtx);
-
-                            id<MTLTexture> glyphTex = im->make_mtl_texture(tex_w, tex_h, MTLPixelFormatRGBA8Unorm, false, false);
-                            if (glyphTex != nil) {
-                                [glyphTex replaceRegion:MTLRegionMake2D(0, 0, tex_w, tex_h)
-                                            mipmapLevel:0
-                                              withBytes:buf.data()
-                                            bytesPerRow:tex_w * 4u];
-
-                                // Submit textured screen quad through fixed-function pipeline
-                                const uint32_t saved_fvf = im->current_fvf;
-                                const uint32_t saved_blend = im->render_states[kRsAlphaBlendEnable];
-                                const uint32_t saved_src   = im->render_states[kRsSrcBlend];
-                                const uint32_t saved_dst   = im->render_states[kRsDestBlend];
-                                const uint32_t saved_tex0  = im->bound_textures[0];
-
-                                if (im->font_scratch_tex_va == 0u) {
-                                    im->font_scratch_tex_id = ++im->next_handle_id;
-                                    im->font_scratch_tex_va = im->alloc_com_object(
-                                        mem, im->vtbl_texture, im->font_scratch_tex_id, kKindTexture);
-                                }
-                                TextureRecord tmp_rec{};
-                                tmp_rec.id = im->font_scratch_tex_id;
-                                tmp_rec.width = tex_w; tmp_rec.height = tex_h;
-                                tmp_rec.mtl_tex = glyphTex;
-                                tmp_rec.guest_va = im->font_scratch_tex_va;
-                                im->textures[tmp_rec.id] = tmp_rec;
-
-                                struct QuadVert { float x, y, z, rhw; uint32_t diff, spec; float u, v; };
-                                const float x0 = static_cast<float>(rx);
-                                const float y0 = static_cast<float>(ry);
-                                const float x1 = x0 + static_cast<float>(tex_w);
-                                const float y1 = y0 + static_cast<float>(tex_h);
-                                QuadVert qv[4] = {
-                                    {x0, y0, 0.0f, 1.0f, 0xFFFFFFFFu, 0u, 0.0f, 0.0f},
-                                    {x1, y0, 0.0f, 1.0f, 0xFFFFFFFFu, 0u, 1.0f, 0.0f},
-                                    {x0, y1, 0.0f, 1.0f, 0xFFFFFFFFu, 0u, 0.0f, 1.0f},
-                                    {x1, y1, 0.0f, 1.0f, 0xFFFFFFFFu, 0u, 1.0f, 1.0f},
-                                };
-
-                                im->current_fvf = 0x000001C4u;
-                                im->render_states[kRsAlphaBlendEnable] = 1u;
-                                im->render_states[kRsSrcBlend]  = 2u; // ONE (premultiplied from CGContext)
-                                im->render_states[kRsDestBlend] = 6u; // INVSRCALPHA
-                                im->bound_textures[0] = tmp_rec.guest_va;
-                                im->execute_draw(mem, kPtTriangleStrip, 2u,
-                                                 reinterpret_cast<const uint8_t*>(qv), 4u, sizeof(QuadVert),
-                                                 nullptr, 0u);
-
-                                im->textures.erase(tmp_rec.id);
-                                im->current_fvf = saved_fvf;
-                                im->render_states[kRsAlphaBlendEnable] = saved_blend;
-                                im->render_states[kRsSrcBlend]  = saved_src;
-                                im->render_states[kRsDestBlend] = saved_dst;
-                                im->bound_textures[0] = saved_tex0;
-                            }
-                        }
-                    }
-
-                    CFRelease(line);
-                    CGColorRelease(cgCol);
-                    CGColorSpaceRelease(cs);
-                    if (!(fr && fr->ct_font)) CFRelease(font);
-                }
+    int32_t out_height = 16;
+    if (auto* im = active_impl()) {
+        std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        FontRecord* fr = im->find_font_by_va(mem, font_va);
+        const size_t max_chars = (count > 0) ? std::min<size_t>(static_cast<size_t>(count), 1024u) : 1024u;
+        std::vector<unichar> u16;
+        u16.reserve(64u);
+        for (size_t i = 0; i < max_chars; ++i) {
+            const uint32_t va = str_va + static_cast<uint32_t>(i * 2u);
+            if (!mem.in_bounds(va, 2u)) break;
+            const uint16_t ch = mem.r16(va);
+            if (count < 0 && ch == 0u) break;
+            u16.push_back(static_cast<unichar>(ch));
+        }
+        if (!u16.empty()) {
+            @autoreleasepool {
+                NSString* nsStr = [NSString stringWithCharacters:u16.data() length:u16.size()];
+                out_height = draw_d3dx_font_nsstring(*im, mem, fr, nsStr, rect_va, format, color);
             }
         }
     }
@@ -4346,13 +4677,13 @@ void D3D9MetalBridge::Impl::init_com_vtables(GuestMemory& mem) {
         &com_stub_ret<8u, 1u>,             // 6 GetTextMetricsA
         &com_stub_ret<8u, 1u>,             // 7 GetTextMetricsW
         &com_stub_ret<4u, 0u>,             // 8 GetDC
-        &com_stub_ret<24u, kE_NOTIMPL>,    // 9 GetGlyphData
+        &com_stub_ret<20u, kE_NOTIMPL>,    // 9 GetGlyphData
         &com_stub_ret<12u, kS_OK>,         // 10 PreloadCharacters
         &com_stub_ret<12u, kS_OK>,         // 11 PreloadGlyphs
         &com_stub_ret<12u, kS_OK>,         // 12 PreloadTextA
         &com_stub_ret<12u, kS_OK>,         // 13 PreloadTextW
         &com_font_draw_text_a,             // 14 DrawTextA (+0x38)
-        &com_font_draw_text_a,             // 15 DrawTextW (+0x3c)
+        &com_font_draw_text_w,             // 15 DrawTextW (+0x3c)
         &com_stub_ret<4u, kS_OK>,          // 16 OnLostDevice (+0x40)
         &com_stub_ret<4u, kS_OK>,          // 17 OnResetDevice (+0x44)
     });
@@ -4549,6 +4880,8 @@ void D3D9MetalBridge::shutdown() {
     impl_->fill_scratch_va     = 0u;
     impl_->font_scratch_tex_id = 0u;
     impl_->font_scratch_tex_va = 0u;
+    impl_->patched_fontl_va    = 0u;
+    impl_->patched_fonts_va    = 0u;
     impl_->current_vb_id       = 0u;
     impl_->current_vb_offset   = 0u;
     impl_->current_vb_va       = 0u;
@@ -4907,6 +5240,7 @@ bool D3D9MetalBridge::handle_d3d_iat(uint32_t iat_va, const char* api_name, CpuC
 
         case d3d_iat::kD3DXCreateTexture: {
             // (pDevice, Width, Height, MipLevels, Usage, Format, Pool, ppTexture) -> 32 bytes
+            ensure_bitmap_fonts_merged_with_jp_fallback(*impl_, mem);
             const uint32_t w      = ctx.arg32(mem, 1);
             const uint32_t h      = ctx.arg32(mem, 2);
             const uint32_t levels = ctx.arg32(mem, 3);
@@ -4964,6 +5298,7 @@ bool D3D9MetalBridge::handle_d3d_iat(uint32_t iat_va, const char* api_name, CpuC
             // 15 args = 60 bytes:
             // (0:Dev, 1:Data, 2:Size, 3:W, 4:H, 5:Mips, 6:Usage, 7:Fmt, 8:Pool,
             //  9:Filter, 10:MipFilter, 11:ColorKey, 12:pSrcInfo, 13:pPalette, 14:ppTexture)
+            ensure_bitmap_fonts_merged_with_jp_fallback(*impl_, mem);
             const uint32_t data_va  = ctx.arg32(mem, 1);
             const uint32_t sz       = ctx.arg32(mem, 2);
             const uint32_t req_w    = ctx.arg32(mem, 3);
@@ -5526,8 +5861,7 @@ bool D3D9MetalBridge::handle_d3d_iat(uint32_t iat_va, const char* api_name, CpuC
                 fr.weight = weight;
                 fr.italic = (italic != 0u);
                 if (face_va) fr.face_name = mem.read_cstring(face_va, 64u);
-                fr.ct_font = CTFontCreateWithName(CFSTR("HiraginoSans-W3"),
-                                                  static_cast<CGFloat>(fr.height), nullptr);
+                fr.ct_font = create_d3dx_ct_font(fr.height, fr.weight);
                 fr.guest_va = impl_->alloc_com_object(mem, impl_->vtbl_font, fr.id, kKindFont, true);
                 impl_->fonts[fr.id] = fr;
                 mem.w32(pp_font, fr.guest_va);

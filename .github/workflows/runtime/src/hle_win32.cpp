@@ -5,9 +5,9 @@
 #include "mbaa_recomp/hle_input.h"
 
 #if defined(__APPLE__)
-#import <CoreFoundation/CoreFoundation.h>
-#import <CoreGraphics/CoreGraphics.h>
-#import <CoreText/CoreText.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <CoreGraphics/CoreGraphics.h>
+#include <CoreText/CoreText.h>
 extern "C" void* objc_autoreleasePoolPush(void);
 extern "C" void  objc_autoreleasePoolPop(void* pool);
 #endif
@@ -30,6 +30,7 @@ extern "C" void  objc_autoreleasePoolPop(void* pool);
 #include <chrono>
 #include <condition_variable>
 #include <cctype>
+#include <cmath>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
@@ -2163,6 +2164,18 @@ void u32_set_rect(CpuContext& ctx, GuestMemory& mem) {
 // ---------------------------------------------------------------------------
 // GDI32 Shims (CoreText Shift-JIS glyph rasterizer)
 // ---------------------------------------------------------------------------
+#if defined(__APPLE__)
+static CTFontRef create_ct_font_for_gdi(int32_t font_px, int32_t weight) {
+    const CGFloat px = static_cast<CGFloat>(std::clamp(font_px, 8, 96));
+    CFStringRef name = (weight >= 600) ? CFSTR("HiraginoSans-W6") : CFSTR("HiraginoSans-W3");
+    CTFontRef font = CTFontCreateWithName(name, px, nullptr);
+    if (!font) {
+        font = CTFontCreateUIFontForLanguage(kCTFontUIFontSystem, px, CFSTR("ja"));
+    }
+    return font;
+}
+#endif
+
 void gdi_create_font_indirect_a(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t lf_va = ctx.arg32(mem, 0);
     auto font = std::make_shared<FontState>();
@@ -2180,6 +2193,22 @@ void gdi_create_font_indirect_a(CpuContext& ctx, GuestMemory& mem) {
     ctx.ret_stdcall(mem, 4u);
 }
 
+void gdi_delete_object(CpuContext& ctx, GuestMemory& mem) {
+    const uint32_t hobj = ctx.arg32(mem, 0);
+    if (hobj != 0u) {
+        std::lock_guard<std::mutex> lock(g_w32.state_mtx);
+        auto it = g_w32.handles.find(hobj);
+        if (it != g_w32.handles.end() && it->second.kind == HandleKind::Font) {
+            g_w32.handles.erase(it);
+            for (auto& kv : g_w32.selected_font_by_dc) {
+                if (kv.second == hobj) kv.second = 0u;
+            }
+        }
+    }
+    ctx.eax = 1u;
+    ctx.ret_stdcall(mem, 4u);
+}
+
 void gdi_select_object(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t hdc  = ctx.arg32(mem, 0);
     const uint32_t hobj = ctx.arg32(mem, 1);
@@ -2194,21 +2223,38 @@ void gdi_get_text_metrics_a(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t hdc   = ctx.arg32(mem, 0);
     const uint32_t tm_va = ctx.arg32(mem, 1);
     int32_t height = 16;
+    int32_t weight = 400;
     {
         std::lock_guard<std::mutex> lock(g_w32.state_mtx);
         const uint32_t hf = g_w32.selected_font_by_dc[hdc];
         auto it = g_w32.handles.find(hf);
         if (it != g_w32.handles.end() && it->second.font) {
-            height = it->second.font->height;
+            height = std::clamp(it->second.font->height, 8, 96);
+            weight = it->second.font->weight;
         }
     }
+    int32_t ascent = (height * 4) / 5;
+    int32_t descent = height - ascent;
+#if defined(__APPLE__)
+    if (CTFontRef font = create_ct_font_for_gdi(height, weight)) {
+        const int32_t ct_asc  = static_cast<int32_t>(std::ceil(CTFontGetAscent(font)));
+        const int32_t ct_desc = static_cast<int32_t>(std::ceil(CTFontGetDescent(font)));
+        if (ct_asc > 0) {
+            ascent  = std::clamp(ct_asc, 1, height);
+            descent = std::max(1, ct_desc);
+        }
+        CFRelease(font);
+    }
+#else
+    (void)weight;
+#endif
     if (tm_va) {
         mem.zero_bytes(tm_va, 56u);
         mem.w32(tm_va + 0u, static_cast<uint32_t>(height));
-        mem.w32(tm_va + 4u, static_cast<uint32_t>((height * 4) / 5)); // tmAscent
-        mem.w32(tm_va + 8u, static_cast<uint32_t>(height - (height * 4) / 5)); // tmDescent
-        mem.w32(tm_va + 20u, static_cast<uint32_t>(height / 2)); // tmAveCharWidth
-        mem.w32(tm_va + 24u, static_cast<uint32_t>(height));     // tmMaxCharWidth
+        mem.w32(tm_va + 4u, static_cast<uint32_t>(ascent));       // tmAscent
+        mem.w32(tm_va + 8u, static_cast<uint32_t>(descent));      // tmDescent
+        mem.w32(tm_va + 20u, static_cast<uint32_t>(height / 2));  // tmAveCharWidth
+        mem.w32(tm_va + 24u, static_cast<uint32_t>(height));      // tmMaxCharWidth
     }
     ctx.eax = 1u;
     ctx.ret_stdcall(mem, 8u);
@@ -2217,57 +2263,91 @@ void gdi_get_text_metrics_a(CpuContext& ctx, GuestMemory& mem) {
 void gdi_get_glyph_outline_a(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t hdc    = ctx.arg32(mem, 0);
     const uint32_t u_char = ctx.arg32(mem, 1);
-    const uint32_t format = ctx.arg32(mem, 2); // 1=GGO_BITMAP, 6=GGO_GRAY8_BITMAP
+    const uint32_t format = ctx.arg32(mem, 2); // 1=GGO_BITMAP, 4=GRAY2, 5=GRAY4, 6=GRAY8 (+ GGO_UNHINTED 0x100)
     const uint32_t gm_va  = ctx.arg32(mem, 3);
     const uint32_t cb_buf = ctx.arg32(mem, 4);
     const uint32_t buf_va = ctx.arg32(mem, 5);
 
+    // Callers sub_0049f280 / sub_0049f620 sign-extend single-byte chars >= 0x80
+    // (movsx -> 0xFFFFFFxx); unwrap sign extension before distinguishing 1B vs 2B Shift-JIS.
+    const uint32_t ch = ((u_char & 0xFFFF0000u) == 0xFFFF0000u)
+                            ? (u_char & 0xFFu)
+                            : (u_char & 0xFFFFu);
+
     int32_t font_px = 16;
+    int32_t font_weight = 400;
     {
         std::lock_guard<std::mutex> lock(g_w32.state_mtx);
         const uint32_t hf = g_w32.selected_font_by_dc[hdc];
         auto it = g_w32.handles.find(hf);
         if (it != g_w32.handles.end() && it->second.font) {
             font_px = std::clamp(it->second.font->height, 8, 96);
+            font_weight = it->second.font->weight;
         }
     }
 
     uint32_t bw = 1, bh = 1;
     int32_t origin_x = 0, origin_y = font_px - 2;
-    int16_t adv_x = static_cast<int16_t>((u_char > 0xFFu) ? font_px : (font_px / 2));
+    int16_t adv_x = static_cast<int16_t>((ch > 0xFFu) ? font_px : (font_px / 2));
+    bool is_whitespace_glyph = (ch == 0x20u || ch == 0x8140u);
     std::vector<uint8_t> gray;
 
 #if defined(__APPLE__)
     uint8_t sjis[3] = {};
     CFIndex sjis_len = 0;
-    if (u_char > 0xFFu) {
-        sjis[0] = static_cast<uint8_t>((u_char >> 8) & 0xFFu);
-        sjis[1] = static_cast<uint8_t>(u_char & 0xFFu);
+    if (ch > 0xFFu) {
+        sjis[0] = static_cast<uint8_t>((ch >> 8) & 0xFFu);
+        sjis[1] = static_cast<uint8_t>(ch & 0xFFu);
         sjis_len = 2;
     } else {
-        sjis[0] = static_cast<uint8_t>(u_char & 0xFFu);
+        sjis[0] = static_cast<uint8_t>(ch & 0xFFu);
         sjis_len = 1;
     }
 
-    UniChar uni = static_cast<UniChar>(u_char & 0x7Fu);
-    CFStringRef cf = CFStringCreateWithBytes(kCFAllocatorDefault, sjis, sjis_len, kCFStringEncodingDOSJapanese, false);
+    UniChar uni = static_cast<UniChar>(ch & 0x7Fu);
+    CFStringRef cf = CFStringCreateWithBytes(
+        kCFAllocatorDefault, sjis, sjis_len, kCFStringEncodingDOSJapanese, false);
+    if (!cf) {
+        cf = CFStringCreateWithBytes(
+            kCFAllocatorDefault, sjis, sjis_len, kCFStringEncodingMacJapanese, false);
+    }
+    if (!cf && sjis_len == 1) {
+        cf = CFStringCreateWithBytes(
+            kCFAllocatorDefault, sjis, sjis_len, kCFStringEncodingWindowsLatin1, false);
+    }
     if (cf && CFStringGetLength(cf) > 0) {
         uni = CFStringGetCharacterAtIndex(cf, 0);
     }
-    if (cf) CFRelease(cf);
 
-    CTFontRef font = CTFontCreateWithName(CFSTR("HiraginoSans-W3"), static_cast<CGFloat>(font_px), nullptr);
-    if (!font) font = CTFontCreateUIFontForLanguage(kCTFontUIFontSystem, static_cast<CGFloat>(font_px), CFSTR("ja"));
-
+    CTFontRef font = create_ct_font_for_gdi(font_px, font_weight);
     if (font) {
+        CTFontRef draw_font = font;
+        CTFontRef fallback_font = nullptr;
         CGGlyph glyph = 0;
-        if (CTFontGetGlyphsForCharacters(font, &uni, &glyph, 1)) {
+        bool has_glyph = CTFontGetGlyphsForCharacters(font, &uni, &glyph, 1);
+        if (!has_glyph) {
+            CFStringRef char_str = cf
+                ? static_cast<CFStringRef>(CFRetain(cf))
+                : CFStringCreateWithCharacters(kCFAllocatorDefault, &uni, 1);
+            if (char_str) {
+                if (CFStringGetLength(char_str) > 0) {
+                    fallback_font = CTFontCreateForString(font, char_str, CFRangeMake(0, 1));
+                    if (fallback_font && CTFontGetGlyphsForCharacters(fallback_font, &uni, &glyph, 1)) {
+                        draw_font = fallback_font;
+                        has_glyph = true;
+                    }
+                }
+                CFRelease(char_str);
+            }
+        }
+        if (has_glyph) {
             CGSize adv{};
-            CTFontGetAdvancesForGlyphs(font, kCTFontOrientationHorizontal, &glyph, &adv, 1);
+            CTFontGetAdvancesForGlyphs(draw_font, kCTFontOrientationHorizontal, &glyph, &adv, 1);
             adv_x = static_cast<int16_t>(std::lround(adv.width));
 
-            CGRect bbox = CTFontGetBoundingRectsForGlyphs(font, kCTFontOrientationHorizontal, &glyph, nullptr, 1);
+            CGRect bbox = CTFontGetBoundingRectsForGlyphs(draw_font, kCTFontOrientationHorizontal, &glyph, nullptr, 1);
             if (bbox.size.width > 0.0 && bbox.size.height > 0.0) {
+                is_whitespace_glyph = false;
                 const int x0 = static_cast<int>(std::floor(bbox.origin.x));
                 const int y0 = static_cast<int>(std::floor(bbox.origin.y));
                 const int x1 = static_cast<int>(std::ceil(bbox.origin.x + bbox.size.width));
@@ -2284,14 +2364,20 @@ void gdi_get_glyph_outline_a(CpuContext& ctx, GuestMemory& mem) {
                 if (cg) {
                     CGContextSetGrayFillColor(cg, 1.0, 1.0);
                     CGPoint pos = CGPointMake(-static_cast<CGFloat>(x0), -static_cast<CGFloat>(y0));
-                    CTFontDrawGlyphs(font, &glyph, &pos, 1, cg);
+                    CTFontDrawGlyphs(draw_font, &glyph, &pos, 1, cg);
                     CGContextRelease(cg);
                 }
                 CGColorSpaceRelease(cs);
+            } else {
+                is_whitespace_glyph = true;
             }
         }
+        if (fallback_font) CFRelease(fallback_font);
         CFRelease(font);
     }
+    if (cf) CFRelease(cf);
+#else
+    (void)font_weight;
 #endif
 
     if (gray.empty()) {
@@ -2308,14 +2394,15 @@ void gdi_get_glyph_outline_a(CpuContext& ctx, GuestMemory& mem) {
         mem.w16(gm_va + 18u, 0u);
     }
 
-    if (format == 0u) { // GGO_METRICS
+    const uint32_t fmt_base = format & 0xFFu;
+    if (fmt_base == 0u || is_whitespace_glyph) { // GGO_METRICS or zero-ink space (keep gmBlackBoxY=1 for div safety, cbSize=0 to skip blit)
         ctx.eax = 0u;
         ctx.ret_stdcall(mem, 28u);
         return;
     }
 
-    const bool is_mono = (format == 1u);
-    const uint32_t gray_max = (format == 4u) ? 4u : ((format == 5u) ? 16u : 64u);
+    const bool is_mono = (fmt_base == 1u);
+    const uint32_t gray_max = (fmt_base == 4u) ? 4u : ((fmt_base == 5u) ? 16u : 64u);
     const uint32_t stride = is_mono ? (((bw + 31u) / 32u) * 4u) : (((bw + 3u) / 4u) * 4u);
     const uint32_t needed = stride * bh;
 
@@ -2906,7 +2993,7 @@ constexpr IatDescriptor kIatTable[] = {
     {0x0051B010u, "GDI32.dll!SelectObject", &gdi_select_object},
     {0x0051B014u, "GDI32.dll!GetGlyphOutlineA", &gdi_get_glyph_outline_a},
     {0x0051B018u, "GDI32.dll!CreateFontIndirectA", &gdi_create_font_indirect_a},
-    {0x0051B01Cu, "GDI32.dll!DeleteObject", &win32_ret_val<4u, 1u>},
+    {0x0051B01Cu, "GDI32.dll!DeleteObject", &gdi_delete_object},
     {0x0051B020u, "GDI32.dll!GetTextMetricsA", &gdi_get_text_metrics_a},
     {0x0051B024u, "GDI32.dll!GetStockObject", &win32_ret_val<4u, 0x10000010u>},
     {0x0051B02Cu, "KERNEL32.dll!WritePrivateProfileStringA", &k32_write_private_profile_string_a},
