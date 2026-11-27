@@ -58,6 +58,7 @@ Use **any one** of the following sideloading methods (**no JIT needed** — simp
 
 1. Launch **MBAACC** on your iPhone/iPad at least **once** so it creates its Documents folder and opens the BYOC asset checker screen.
 2. From your PC **MBAACC** folder, prepare the following files and folders:
+<img width="672" height="344" alt="image" src="https://github.com/user-attachments/assets/3b80aa71-3f0b-405e-8c3b-472915ca697d" />
 
 ```text
 MBAACC/
