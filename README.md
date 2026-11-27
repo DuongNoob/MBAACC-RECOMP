@@ -78,6 +78,8 @@ MBAACC/
 ├── GRP/              (optional, if present in your PC install)
 └── Movie/            (optional, if present in your PC install)
 ```
+<img width="120" height="38" alt="image" src="https://github.com/user-attachments/assets/054b5946-9f93-48b7-9494-ed50e0fc696f" />
+zip all of this
 
 3. Transfer them using **either** method:
    - **On iPhone/iPad (Files app):**  
