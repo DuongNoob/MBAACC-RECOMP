@@ -165,6 +165,10 @@ public:
     /// Submits any pending work, copies backbuffer into centered 4:3 drawable viewport, and presents.
     void end_frame_and_present();
 
+    /// Suppresses Metal GPU encoding and SwapChain presentation during rollback resimulation ticks.
+    void set_skip_render(bool skip);
+    [[nodiscard]] bool skip_render() const noexcept;
+
     /// Evicts oldest LRU Metal textures down to minimal live footprint on iOS memory warnings.
     void evict_on_memory_warning();
 
@@ -216,6 +220,8 @@ inline void D3D9MetalBridge::shutdown() {
 inline void D3D9MetalBridge::resize(int, int) {}
 inline void D3D9MetalBridge::begin_frame() {}
 inline void D3D9MetalBridge::end_frame_and_present() {}
+inline void D3D9MetalBridge::set_skip_render(bool) {}
+inline bool D3D9MetalBridge::skip_render() const noexcept { return false; }
 inline void D3D9MetalBridge::evict_on_memory_warning() {}
 inline bool D3D9MetalBridge::handle_d3d_iat(uint32_t, const char*, CpuContext&, GuestMemory&) { return false; }
 inline void D3D9MetalBridge::set_active(D3D9MetalBridge* bridge) noexcept { _d3d9_active_bridge_slot() = bridge; }

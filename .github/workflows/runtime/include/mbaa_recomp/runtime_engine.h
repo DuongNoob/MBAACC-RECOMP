@@ -19,6 +19,53 @@
 
 namespace mbaa_recomp {
 
+enum class NetplayMode : uint8_t {
+    Offline  = 0,
+    Host     = 1,
+    Join     = 2,
+    Spectate = 3,
+};
+
+enum class NetplayConnState : uint8_t {
+    Offline     = 0,
+    Listening   = 1,
+    Connecting  = 2,
+    Handshaking = 3,
+    Connected   = 4,
+    InGame      = 5,
+    Error       = 6,
+};
+
+struct NetplayConfig {
+    std::string peer_ip;
+    uint16_t    port          = 3939u; // 0 = ephemeral OS port when hosting
+    std::string player_name   = "iOS";
+    int         delay_frames  = -1;    // -1 = Auto from RTT; 0..254 = fixed
+    int         max_rollback  = 4;     // 0..15 (CCCaster config.ini defaultRollback=4)
+    bool        training_mode = false;
+};
+
+struct NetplayStatus {
+    NetplayMode      mode           = NetplayMode::Offline;
+    NetplayConnState state          = NetplayConnState::Offline;
+    bool             active         = false;
+    bool             connected      = false;
+    bool             in_match       = false;
+    uint16_t         local_port     = 0u;
+    std::string      local_ipv4;
+    std::string      peer_addr;
+    std::string      peer_name;
+    double           ping_ms        = 0.0; // RTT in ms
+    double           one_way_ms     = 0.0; // Mean one-way latency in ms
+    int              delay_frames   = 0;
+    int              max_rollback   = 4;
+    uint32_t         current_frame  = 0u;
+    uint32_t         rollback_count = 0u;
+    uint32_t         desync_count   = 0u;
+    std::string      state_label;
+    std::string      last_error;
+};
+
 class RuntimeEngine {
 public:
     RuntimeEngine();
@@ -42,8 +89,20 @@ public:
     /// Handles iOS UIApplicationDidReceiveMemoryWarningNotification (evicts LRU Metal textures).
     void handle_memory_warning();
 
+    /// Updates Metal drawable pixel size on view resize / orientation change.
+    void resize_drawable(int width, int height);
+
     /// Cleanly exits the guest message loop, saves config, and frees runtime resources.
     void shutdown();
+
+    /// CCCaster v3.1 Netplay session control (lazy-allocates rollback ring buffer on start,
+    /// frees completely on stop_netplay() / disconnect).
+    bool start_netplay_host(const NetplayConfig& config);
+    bool start_netplay_join(const NetplayConfig& config);
+    bool start_netplay_spectate(const NetplayConfig& config);
+    void stop_netplay();
+    [[nodiscard]] NetplayStatus netplay_status() const;
+    [[nodiscard]] static std::string get_local_ipv4();
 
     [[nodiscard]] bool is_initialized() const noexcept;
     [[nodiscard]] bool is_running() const noexcept;

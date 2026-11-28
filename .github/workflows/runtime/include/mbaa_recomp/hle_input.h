@@ -65,4 +65,23 @@ void input_poll_platform();
 /// HLE entry for DINPUT8.dll!DirectInput8Create (stdcall, 5 args: 20 bytes).
 void hle_direct_input8_create(CpuContext& ctx, GuestMemory& mem);
 
+/// Encodes local P1 touch + GCController state into a CCCaster v3.1 16-bit input word:
+/// bits 0..3 = numpad direction (1..9, 0 = neutral), bits 4..15 = MBAACC button mask >> 4.
+[[nodiscard]] uint16_t input_encode_local_word();
+
+/// Enables/disables netplay input override (suppresses raw local DI/VK polling).
+void input_set_netplay_override(bool active);
+[[nodiscard]] bool input_is_netplay_override();
+
+/// Latches (P1, P2) CCCaster 16-bit input words for frame poll interception (0x004a00b0)
+/// and writes them directly into *[0x0076e6ac] + 0x18/0x24 (P1) and +0x2c/0x38 (P2).
+void input_inject_netplay_pair(GuestMemory& mem,
+                               uint16_t p1_word,
+                               uint16_t p2_word,
+                               bool mask_spectator_auto_confirm = false);
+
+/// Intercepts MBAA.exe PollInputDevice (0x004a00b0) when netplay override is active.
+/// Returns true if handled (injected netplay input); false leaves normal guest code to run.
+[[nodiscard]] bool input_handle_poll_input_device(CpuContext& ctx, GuestMemory& mem);
+
 } // namespace mbaa_recomp
