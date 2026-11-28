@@ -20,6 +20,8 @@ set(MBAA_RUNTIME_CORE_SOURCES
     runtime/src/hle_dshow.cpp
     runtime/src/rollback_hooks.cpp
     runtime/src/bcdec_dxt.cpp
+    runtime/src/cccaster_protocol.cpp
+    runtime/src/netplay_rollback.cpp
 )
 
 set(MBAA_RUNTIME_APPLE_SOURCES
@@ -47,7 +49,18 @@ if(MSVC)
     target_compile_definitions(mbaa_runtime PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX)
     target_compile_options(mbaa_runtime PRIVATE /W4 /utf-8)
 else()
+    # PUBLIC so lifted build_gen/ code and the app are compiled with identical FP rules:
+    # ARM64 FMA contraction would diverge from x86 MBAA.exe results and desync CCCaster netplay.
     target_compile_options(mbaa_runtime PRIVATE -Wall -Wextra -Wno-unused-parameter)
+    target_compile_options(mbaa_runtime PUBLIC -ffp-contract=off)
+endif()
+
+# zlib: CCCaster v3.1 packet framing (compress2/uncompress)
+if(APPLE)
+    target_link_libraries(mbaa_runtime PUBLIC z)
+else()
+    find_package(ZLIB REQUIRED)
+    target_link_libraries(mbaa_runtime PUBLIC ZLIB::ZLIB)
 endif()
 
 if(APPLE)
