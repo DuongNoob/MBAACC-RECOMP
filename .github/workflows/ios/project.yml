@@ -41,9 +41,11 @@ targets:
           - "$(inherited)"
           - "-O2"
           - "-fexceptions"
+          - "-ffp-contract=off"
         OTHER_LDFLAGS:
           - "$(inherited)"
           - "-liconv"
+          - "-lz"
     sources:
       - path: App
         excludes:
@@ -72,4 +74,5 @@ targets:
       - sdk: UIKit.framework
       - sdk: Foundation.framework
       - sdk: libiconv.tbd
+      - sdk: libz.tbd
     scheme: {}
