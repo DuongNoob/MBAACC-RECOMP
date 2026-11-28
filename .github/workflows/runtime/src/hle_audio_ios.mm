@@ -9,6 +9,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdio>
@@ -68,9 +69,21 @@ struct SoundVoice {
 };
 
 struct AudioState {
+    static constexpr uint32_t kSfxTableVa   = 0x0076E008u; // 1,500 SFX trigger bytes
+    static constexpr uint32_t kSfxPtrsVa    = 0x0076C6F8u; // 1,500 SFX wrapper pointers
+    static constexpr size_t   kSfxSlotCount = 1500u;
+
     std::mutex mutex;
     std::atomic<bool> initialized{false};
     std::atomic<bool> muted{false};
+    std::atomic<bool> rollback_mute{false};
+    std::atomic<bool> rollback_tracking{false};
+    std::atomic<uint32_t> rollback_frame{0u};
+    std::atomic<bool> in_rollback_catchup{false};
+    std::atomic<uint32_t> catchup_rollback_target{0u};
+    std::array<uint32_t, kSfxSlotCount> sfx_last_played_frame{};
+    std::array<uint8_t,  kSfxSlotCount> sfx_has_played{};
+    std::array<uint8_t,  kSfxSlotCount> resim_sfx_accum{};
     std::unordered_map<uint32_t, std::shared_ptr<SoundVoice>> voices_by_obj;
     std::vector<std::shared_ptr<SoundVoice>> active_list;
 
@@ -88,6 +101,25 @@ struct AudioState {
 };
 
 AudioState g_audio;
+
+int find_triggered_sfx_slot(const GuestMemory& mem, uint32_t obj_va) noexcept {
+    if (!mem.in_bounds(AudioState::kSfxTableVa, AudioState::kSfxSlotCount) ||
+        !mem.in_bounds(AudioState::kSfxPtrsVa, AudioState::kSfxSlotCount * 4u)) {
+        return -1;
+    }
+    const uint8_t* trig = mem.cptr(AudioState::kSfxTableVa);
+    for (size_t i = 0; i < AudioState::kSfxSlotCount; ++i) {
+        if (trig[i] != 1u) continue;
+        const uint32_t wrapper = mem.r32(AudioState::kSfxPtrsVa + static_cast<uint32_t>(i * 4u));
+        if (wrapper == 0u || !mem.in_bounds(wrapper + 4u, 4u)) continue;
+        const uint32_t inner = mem.r32(wrapper + 4u);
+        if (inner == 0u || !mem.in_bounds(inner, 4u)) continue;
+        if (mem.r32(inner) == obj_va) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
 
 float millibels_to_gain(int32_t mb) noexcept {
     if (mb <= -10000) return 0.0f;
@@ -694,9 +726,36 @@ void dsb_unlock(CpuContext& ctx, GuestMemory& mem) {
 void dsb_play(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t obj_va = ctx.arg32(mem, 0);
     const uint32_t flags  = ctx.arg32(mem, 3);
+    const bool is_looping = (flags & kDSBPLAY_LOOPING) != 0u;
     auto v = find_voice(obj_va);
     if (v) {
+        const bool track_rollback = g_audio.rollback_tracking.load(std::memory_order_acquire) &&
+                                    !v->is_primary && !is_looping;
+        const int sfx_slot = track_rollback ? find_triggered_sfx_slot(mem, obj_va) : -1;
+
         std::lock_guard<std::mutex> lock(g_audio.mutex);
+        if (g_audio.rollback_mute.load(std::memory_order_acquire)) {
+            if (sfx_slot >= 0) {
+                g_audio.resim_sfx_accum[static_cast<size_t>(sfx_slot)] = 1u;
+            }
+            ctx.eax = kDS_OK;
+            ctx.ret_stdcall(mem, 16u);
+            return;
+        }
+        if (track_rollback && sfx_slot >= 0) {
+            const size_t idx = static_cast<size_t>(sfx_slot);
+            if (g_audio.in_rollback_catchup.load(std::memory_order_acquire)) {
+                const uint32_t target = g_audio.catchup_rollback_target.load(std::memory_order_acquire);
+                if (g_audio.sfx_has_played[idx] != 0u && g_audio.sfx_last_played_frame[idx] >= target) {
+                    ctx.eax = kDS_OK;
+                    ctx.ret_stdcall(mem, 16u);
+                    return;
+                }
+            }
+            g_audio.sfx_has_played[idx] = 1u;
+            g_audio.sfx_last_played_frame[idx] = g_audio.rollback_frame.load(std::memory_order_acquire);
+        }
+
         if (!v->playing) {
             const uint32_t block_align = std::max<uint32_t>(1u, v->channels * (v->bits_per_sample / 8u));
             v->prev_byte_pos = (v->buffer_bytes > 0u)
@@ -704,7 +763,7 @@ void dsb_play(CpuContext& ctx, GuestMemory& mem) {
                 : 0u;
         }
         v->playing = true;
-        v->looping = (flags & kDSBPLAY_LOOPING) != 0u;
+        v->looping = is_looping;
     }
     ctx.eax = kDS_OK;
     ctx.ret_stdcall(mem, 16u);
@@ -962,10 +1021,75 @@ void audio_shutdown() {
     g_audio.notify_vtable = 0u;
     g_audio.ds8_obj_va    = 0u;
     g_audio.health_tick   = 0u;
+    g_audio.rollback_mute.store(false, std::memory_order_relaxed);
+    g_audio.rollback_tracking.store(false, std::memory_order_relaxed);
+    g_audio.rollback_frame.store(0u, std::memory_order_relaxed);
+    g_audio.in_rollback_catchup.store(false, std::memory_order_relaxed);
+    g_audio.catchup_rollback_target.store(0u, std::memory_order_relaxed);
+    g_audio.sfx_last_played_frame.fill(0u);
+    g_audio.sfx_has_played.fill(0u);
+    g_audio.resim_sfx_accum.fill(0u);
 }
 
 void audio_set_muted(bool muted) {
     g_audio.muted.store(muted, std::memory_order_relaxed);
+}
+
+void audio_set_rollback_mute(bool muted) {
+    g_audio.rollback_mute.store(muted, std::memory_order_release);
+}
+
+bool audio_is_rollback_muted() {
+    return g_audio.rollback_mute.load(std::memory_order_acquire);
+}
+
+void audio_rollback_set_tracking(bool active, uint32_t current_frame) {
+    g_audio.rollback_frame.store(current_frame, std::memory_order_release);
+    if (!active) {
+        g_audio.rollback_mute.store(false, std::memory_order_release);
+        g_audio.rollback_tracking.store(false, std::memory_order_release);
+        g_audio.in_rollback_catchup.store(false, std::memory_order_release);
+        g_audio.catchup_rollback_target.store(0u, std::memory_order_release);
+        std::lock_guard<std::mutex> lock(g_audio.mutex);
+        g_audio.sfx_last_played_frame.fill(0u);
+        g_audio.sfx_has_played.fill(0u);
+        g_audio.resim_sfx_accum.fill(0u);
+    } else {
+        g_audio.rollback_tracking.store(true, std::memory_order_release);
+    }
+}
+
+void audio_rollback_begin_catchup(uint32_t rollback_target_frame) {
+    {
+        std::lock_guard<std::mutex> lock(g_audio.mutex);
+        g_audio.resim_sfx_accum.fill(0u);
+    }
+    g_audio.catchup_rollback_target.store(rollback_target_frame, std::memory_order_release);
+    g_audio.in_rollback_catchup.store(true, std::memory_order_release);
+    g_audio.rollback_mute.store(true, std::memory_order_release);
+}
+
+void audio_rollback_prepare_live_catchup(GuestMemory& mem) {
+    g_audio.rollback_mute.store(false, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(g_audio.mutex);
+    const uint32_t target = g_audio.catchup_rollback_target.load(std::memory_order_acquire);
+    if (mem.in_bounds(AudioState::kSfxTableVa, AudioState::kSfxSlotCount)) {
+        for (size_t i = 0; i < AudioState::kSfxSlotCount; ++i) {
+            if (g_audio.resim_sfx_accum[i] == 0u) continue;
+            if (g_audio.sfx_has_played[i] != 0u && g_audio.sfx_last_played_frame[i] >= target) {
+                continue;
+            }
+            mem.w8(AudioState::kSfxTableVa + static_cast<uint32_t>(i), 1u);
+        }
+    }
+    g_audio.resim_sfx_accum.fill(0u);
+}
+
+void audio_rollback_end_catchup() {
+    g_audio.rollback_mute.store(false, std::memory_order_release);
+    g_audio.in_rollback_catchup.store(false, std::memory_order_release);
+    std::lock_guard<std::mutex> lock(g_audio.mutex);
+    g_audio.resim_sfx_accum.fill(0u);
 }
 
 void audio_update_streams() {

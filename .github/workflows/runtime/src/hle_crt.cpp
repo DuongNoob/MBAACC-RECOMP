@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cctype>
 #include <cmath>
 #include <complex>
@@ -14,6 +15,7 @@
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -2158,6 +2160,930 @@ void hle_crt_004f4620(CpuContext& ctx, GuestMemory& mem) {
     ctx.ret_cdecl(mem);
 }
 
+namespace det_math {
+
+#if defined(__clang__)
+#pragma STDC FP_CONTRACT OFF
+#endif
+
+inline double u64_to_d(uint64_t u) noexcept {
+    return std::bit_cast<double>(u);
+}
+
+inline uint64_t d_to_u64(double d) noexcept {
+    return std::bit_cast<uint64_t>(d);
+}
+
+inline void extract_words(double d, int32_t& hi, uint32_t& lo) noexcept {
+    const uint64_t u = d_to_u64(d);
+    hi = static_cast<int32_t>(static_cast<uint32_t>(u >> 32));
+    lo = static_cast<uint32_t>(u & 0xFFFFFFFFu);
+}
+
+inline int32_t high_word(double d) noexcept {
+    return static_cast<int32_t>(static_cast<uint32_t>(d_to_u64(d) >> 32));
+}
+
+inline uint32_t low_word(double d) noexcept {
+    return static_cast<uint32_t>(d_to_u64(d) & 0xFFFFFFFFu);
+}
+
+inline double make_double(uint32_t hi, uint32_t lo) noexcept {
+    return u64_to_d((static_cast<uint64_t>(hi) << 32) | static_cast<uint64_t>(lo));
+}
+
+inline double make_double_i(int32_t hi, uint32_t lo) noexcept {
+    return make_double(static_cast<uint32_t>(hi), lo);
+}
+
+inline double scalbn_det(double x, int n) noexcept {
+    // Pure IEEE-754 power-of-2 scaling via bit manipulation (no libm call).
+    static constexpr double kTwo54  = 18014398509481984.0;          // 0x4350000000000000
+    static constexpr double kTwoM54 = 5.55111512312578270212e-17;   // 0x3C90000000000000
+    static constexpr double kHuge   = 1.0e300;
+    static constexpr double kTiny   = 1.0e-300;
+
+    int32_t hx = 0;
+    uint32_t lx = 0;
+    extract_words(x, hx, lx);
+    int32_t k = static_cast<int32_t>((static_cast<uint32_t>(hx) & 0x7FF00000u) >> 20);
+    if (k == 0) {
+        if ((lx | (static_cast<uint32_t>(hx) & 0x7FFFFFFFu)) == 0u) {
+            return x;
+        }
+        x *= kTwo54;
+        hx = high_word(x);
+        k = static_cast<int32_t>((static_cast<uint32_t>(hx) & 0x7FF00000u) >> 20) - 54;
+        if (n < -50000) {
+            return kTiny * x;
+        }
+    }
+    if (k == 0x7FF) {
+        return x + x;
+    }
+    k = k + n;
+    if (k > 0x7FE) {
+        return kHuge * ((hx < 0) ? -kHuge : kHuge);
+    }
+    if (k > 0) {
+        const uint32_t new_hi = (static_cast<uint32_t>(hx) & 0x800FFFFFu) | (static_cast<uint32_t>(k) << 20);
+        return make_double(new_hi, low_word(x));
+    }
+    if (k <= -54) {
+        if (n > 50000) {
+            return kHuge * ((hx < 0) ? -kHuge : kHuge);
+        }
+        return kTiny * ((hx < 0) ? -kTiny : kTiny);
+    }
+    k += 54;
+    const uint32_t new_hi = (static_cast<uint32_t>(hx) & 0x800FFFFFu) | (static_cast<uint32_t>(k) << 20);
+    return make_double(new_hi, low_word(x)) * kTwoM54;
+}
+
+inline double floor_det(double x) noexcept {
+    static constexpr double kHuge = 1.0e300;
+    int32_t i0 = 0;
+    uint32_t i1 = 0;
+    extract_words(x, i0, i1);
+    const int32_t j0 = static_cast<int32_t>((static_cast<uint32_t>(i0) >> 20) & 0x7FFu) - 0x3FF;
+    if (j0 < 20) {
+        if (j0 < 0) {
+            if (kHuge + x > 0.0) {
+                if (i0 >= 0) {
+                    i0 = 0;
+                    i1 = 0u;
+                } else if (((static_cast<uint32_t>(i0) & 0x7FFFFFFFu) | i1) != 0u) {
+                    i0 = static_cast<int32_t>(0xBFF00000u);
+                    i1 = 0u;
+                }
+            }
+        } else {
+            const uint32_t i = 0x000FFFFFu >> j0;
+            if (((static_cast<uint32_t>(i0) & i) | i1) == 0u) {
+                return x;
+            }
+            if (kHuge + x > 0.0) {
+                if (i0 < 0) {
+                    i0 = static_cast<int32_t>(static_cast<uint32_t>(i0) + (0x00100000u >> j0));
+                }
+                i0 = static_cast<int32_t>(static_cast<uint32_t>(i0) & (~i));
+                i1 = 0u;
+            }
+        }
+    } else if (j0 > 51) {
+        if (j0 == 0x400) {
+            return x + x;
+        }
+        return x;
+    } else {
+        const uint32_t i = 0xFFFFFFFFu >> (j0 - 20);
+        if ((i1 & i) == 0u) {
+            return x;
+        }
+        if (kHuge + x > 0.0) {
+            if (i0 < 0) {
+                if (j0 == 20) {
+                    i0 += 1;
+                } else {
+                    const uint32_t j = i1 + (1u << (52 - j0));
+                    if (j < i1) {
+                        i0 += 1;
+                    }
+                    i1 = j;
+                }
+            }
+            i1 &= (~i);
+        }
+    }
+    return make_double_i(i0, i1);
+}
+
+inline double fabs_det(double x) noexcept {
+    return u64_to_d(d_to_u64(x) & 0x7FFFFFFFFFFFFFFFull);
+}
+
+int kernel_rem_pio2(const double* x, double* y, int e0, int nx, int prec) noexcept {
+    static constexpr int32_t kTwoOverPi[66] = {
+        0xa2f983, 0x6e4e44, 0x1529fc, 0x2757d1, 0xf534dd, 0xc0db62,
+        0x95993c, 0x439041, 0xfe5163, 0xabdebb, 0xc561b7, 0x246e3a,
+        0x424dd2, 0xe00649, 0x2eea09, 0xd1921c, 0xfe1deb, 0x1cb129,
+        0xa73ee8, 0x8235f5, 0x2ebb44, 0x84e99c, 0x7026b4, 0x5f7e41,
+        0x3991d6, 0x398353, 0x39f49c, 0x845f8b, 0xbdf928, 0x3b1ff8,
+        0x97ffde, 0x05980f, 0xef2f11, 0x8b5a0a, 0x6d1f6d, 0x367ecf,
+        0x27cb09, 0xb74f46, 0x3f669e, 0x5fea2d, 0x7527ba, 0xc7ebe5,
+        0xf17b3d, 0x0739f7, 0x8a5292, 0xea6bfb, 0x5fb11f, 0x8d5d08,
+        0x560330, 0x46fc7b, 0x6babf0, 0xcfbc20, 0x9af436, 0x1da9e3,
+        0x91615e, 0xe61b08, 0x659985, 0x5f14a0, 0x68408d, 0xffd880,
+        0x4d7327, 0x310606, 0x1556ca, 0x73a8c9, 0x60e27b, 0xc08c6b,
+    };
+    static constexpr uint64_t kPIo2Bits[8] = {
+        0x3ff921fb40000000ull, 0x3e74442d00000000ull,
+        0x3cf8469880000000ull, 0x3b78cc5160000000ull,
+        0x39f01b8380000000ull, 0x387a252040000000ull,
+        0x36e3822280000000ull, 0x3569f31d00000000ull,
+    };
+    static constexpr int kInitJk[4] = {2, 3, 4, 6};
+    static constexpr double kTwo24  = 1.67772160000000000000e+07;
+    static constexpr double kTwoN24 = 5.96046447753906250000e-08;
+
+    const int jk = kInitJk[prec];
+    const int jp = jk;
+    const int jx = nx - 1;
+    int jv = (e0 - 3) / 24;
+    if (jv < 0) jv = 0;
+    int q0 = e0 - 24 * (jv + 1);
+
+    double f[20] = {};
+    int j = jv - jx;
+    const int m = jx + jk;
+    for (int i = 0; i <= m; ++i, ++j) {
+        f[i] = (j < 0) ? 0.0 : static_cast<double>(kTwoOverPi[j]);
+    }
+
+    double q[20] = {};
+    for (int i = 0; i <= jk; ++i) {
+        double fw = 0.0;
+        for (int jj = 0; jj <= jx; ++jj) {
+            fw += x[jj] * f[jx + i - jj];
+        }
+        q[i] = fw;
+    }
+
+    int jz = jk;
+    int32_t iq[20] = {};
+    double z = 0.0;
+    int n = 0;
+    int ih = 0;
+    for (;;) {
+        z = q[jz];
+        for (int i = jz, jj = 0; i > 0; --i, ++jj) {
+            const double fw = static_cast<double>(static_cast<int32_t>(kTwoN24 * z));
+            iq[jj] = static_cast<int32_t>(z - kTwo24 * fw);
+            z = q[i - 1] + fw;
+        }
+        z = scalbn_det(z, q0);
+        z -= 8.0 * floor_det(z * 0.125);
+        n = static_cast<int>(z);
+        z -= static_cast<double>(n);
+        ih = 0;
+        if (q0 > 0) {
+            const int32_t carry_hi = iq[jz - 1] >> (24 - q0);
+            n += carry_hi;
+            iq[jz - 1] -= carry_hi << (24 - q0);
+            ih = iq[jz - 1] >> (23 - q0);
+        } else if (q0 == 0) {
+            ih = iq[jz - 1] >> 23;
+        } else if (z >= 0.5) {
+            ih = 2;
+        }
+
+        if (ih > 0) {
+            n += 1;
+            int carry = 0;
+            for (int i = 0; i < jz; ++i) {
+                const int32_t v = iq[i];
+                if (carry == 0) {
+                    if (v != 0) {
+                        carry = 1;
+                        iq[i] = 0x1000000 - v;
+                    }
+                } else {
+                    iq[i] = 0xFFFFFF - v;
+                }
+            }
+            if (q0 > 0) {
+                if (q0 == 1) iq[jz - 1] &= 0x7FFFFF;
+                else if (q0 == 2) iq[jz - 1] &= 0x3FFFFF;
+            }
+            if (ih == 2) {
+                z = 1.0 - z;
+                if (carry != 0) {
+                    z -= scalbn_det(1.0, q0);
+                }
+            }
+        }
+
+        if (z == 0.0) {
+            int32_t nz = 0;
+            for (int i = jz - 1; i >= jk; --i) nz |= iq[i];
+            if (nz == 0) {
+                int k = 1;
+                while (iq[jk - k] == 0) ++k;
+                for (int i = jz + 1; i <= jz + k; ++i) {
+                    f[jx + i] = static_cast<double>(kTwoOverPi[jv + i]);
+                    double fw = 0.0;
+                    for (int jj = 0; jj <= jx; ++jj) {
+                        fw += x[jj] * f[jx + i - jj];
+                    }
+                    q[i] = fw;
+                }
+                jz += k;
+                continue;
+            }
+        }
+        break;
+    }
+
+    if (z == 0.0) {
+        --jz;
+        q0 -= 24;
+        while (iq[jz] == 0) {
+            --jz;
+            q0 -= 24;
+        }
+    } else {
+        z = scalbn_det(z, -q0);
+        if (z >= kTwo24) {
+            const double fw = static_cast<double>(static_cast<int32_t>(kTwoN24 * z));
+            iq[jz] = static_cast<int32_t>(z - kTwo24 * fw);
+            ++jz;
+            q0 += 24;
+            iq[jz] = static_cast<int32_t>(fw);
+        } else {
+            iq[jz] = static_cast<int32_t>(z);
+        }
+    }
+
+    double fw = scalbn_det(1.0, q0);
+    for (int i = jz; i >= 0; --i) {
+        q[i] = fw * static_cast<double>(iq[i]);
+        fw *= kTwoN24;
+    }
+
+    double fq[20] = {};
+    for (int i = jz; i >= 0; --i) {
+        double sum = 0.0;
+        const int kmax = (jp < (jz - i)) ? jp : (jz - i);
+        for (int k = 0; k <= kmax; ++k) {
+            sum += u64_to_d(kPIo2Bits[k]) * q[i + k];
+        }
+        fq[jz - i] = sum;
+    }
+
+    if (ih != 0) {
+        for (int i = 0; i <= jz; ++i) {
+            fq[i] = -fq[i];
+        }
+    }
+
+    double sum0 = 0.0;
+    for (int i = jz; i >= 0; --i) {
+        sum0 += fq[i];
+    }
+    y[0] = sum0;
+    double sum1 = fq[0] - sum0;
+    for (int i = 1; i <= jz; ++i) {
+        sum1 += fq[i];
+    }
+    y[1] = sum1;
+    return n & 7;
+}
+
+int rem_pio2_det(double x, double* y) noexcept {
+    static constexpr uint32_t kNpio2Hw[32] = {
+        0x3ff921fbu, 0x400921fbu, 0x4012d97cu, 0x401921fbu, 0x401f6a7au, 0x4022d97cu,
+        0x4025fdbbu, 0x402921fbu, 0x402c463au, 0x402f6a7au, 0x4031475cu, 0x4032d97cu,
+        0x40346b9cu, 0x4035fdbbu, 0x40378fdbu, 0x403921fbu, 0x403ab41bu, 0x403c463au,
+        0x403dd85au, 0x403f6a7au, 0x40407e4cu, 0x4041475cu, 0x4042106cu, 0x4042d97cu,
+        0x4043a28cu, 0x40446b9cu, 0x404534acu, 0x4045fdbbu, 0x4046c6cbu, 0x40478fdbu,
+        0x404858ebu, 0x404921fbu,
+    };
+    const double invpio2 = u64_to_d(0x3FE45F306DC9C883ull);
+    const double pio2_1  = u64_to_d(0x3FF921FB54400000ull);
+    const double pio2_1t = u64_to_d(0x3DD0B4611A626331ull);
+    const double pio2_2  = u64_to_d(0x3DD0B4611A600000ull);
+    const double pio2_2t = u64_to_d(0x3BA3198A2E037073ull);
+    const double pio2_3  = u64_to_d(0x3BA3198A2E000000ull);
+    const double pio2_3t = u64_to_d(0x397B839A252049C1ull);
+    static constexpr double kTwo24 = 16777216.0;
+
+    int32_t hx = 0;
+    uint32_t lx = 0;
+    extract_words(x, hx, lx);
+    const uint32_t ix = static_cast<uint32_t>(hx) & 0x7FFFFFFFu;
+
+    if (ix <= 0x3FE921FBu) {
+        y[0] = x;
+        y[1] = 0.0;
+        return 0;
+    }
+    if (ix < 0x4002D97Cu) {
+        if (hx > 0) {
+            double z = x - pio2_1;
+            if (ix != 0x3FF921FBu) {
+                y[0] = z - pio2_1t;
+                y[1] = (z - y[0]) - pio2_1t;
+            } else {
+                z -= pio2_2;
+                y[0] = z - pio2_2t;
+                y[1] = (z - y[0]) - pio2_2t;
+            }
+            return 1;
+        } else {
+            double z = x + pio2_1;
+            if (ix != 0x3FF921FBu) {
+                y[0] = z + pio2_1t;
+                y[1] = (z - y[0]) + pio2_1t;
+            } else {
+                z += pio2_2;
+                y[0] = z + pio2_2t;
+                y[1] = (z - y[0]) + pio2_2t;
+            }
+            return -1;
+        }
+    }
+    if (ix <= 0x413921FBu) {
+        const double t_abs = fabs_det(x);
+        const double fn = floor_det(t_abs * invpio2 + 0.5);
+        const int n = static_cast<int>(fn);
+        double r = t_abs - fn * pio2_1;
+        double w = fn * pio2_1t;
+        if (n < 32 && ix != kNpio2Hw[n - 1]) {
+            y[0] = r - w;
+        } else {
+            const uint32_t j = ix >> 20;
+            y[0] = r - w;
+            uint32_t i = j - ((static_cast<uint32_t>(high_word(y[0])) >> 20) & 0x7FFu);
+            if (i > 16u) {
+                double t = r;
+                w = fn * pio2_2;
+                r = t - w;
+                w = fn * pio2_2t - ((t - r) - w);
+                y[0] = r - w;
+                i = j - ((static_cast<uint32_t>(high_word(y[0])) >> 20) & 0x7FFu);
+                if (i > 49u) {
+                    t = r;
+                    w = fn * pio2_3;
+                    r = t - w;
+                    w = fn * pio2_3t - ((t - r) - w);
+                    y[0] = r - w;
+                }
+            }
+        }
+        y[1] = (r - y[0]) - w;
+        if (hx < 0) {
+            y[0] = -y[0];
+            y[1] = -y[1];
+            return -n;
+        }
+        return n;
+    }
+    if (ix >= 0x7FF00000u) {
+        y[0] = x - x;
+        y[1] = y[0];
+        return 0;
+    }
+
+    const int e0 = static_cast<int>(ix >> 20) - 1046;
+    double z = make_double(ix - static_cast<uint32_t>(e0 << 20), lx);
+    double tx[3] = {};
+    for (int i = 0; i < 2; ++i) {
+        tx[i] = static_cast<double>(static_cast<int32_t>(z));
+        z = (z - tx[i]) * kTwo24;
+    }
+    tx[2] = z;
+    int nx = 3;
+    while (tx[nx - 1] == 0.0) --nx;
+    const int n = kernel_rem_pio2(tx, y, e0, nx, 2);
+    if (hx < 0) {
+        y[0] = -y[0];
+        y[1] = -y[1];
+        return -n;
+    }
+    return n;
+}
+
+double kernel_sin_det(double x, double y, int iy) noexcept {
+    const double S1 = u64_to_d(0xBFC5555555555549ull);
+    const double S2 = u64_to_d(0x3F8111111110F8A6ull);
+    const double S3 = u64_to_d(0xBF2A01A019C161D5ull);
+    const double S4 = u64_to_d(0x3EC71DE357B1FE7Dull);
+    const double S5 = u64_to_d(0xBE5AE5E68A2B9CEBull);
+    const double S6 = u64_to_d(0x3DE5D93A5ACFD57Cull);
+
+    const uint32_t ix = static_cast<uint32_t>(high_word(x)) & 0x7FFFFFFFu;
+    if (ix < 0x3E400000u) {
+        if (static_cast<int>(x) == 0) return x;
+    }
+    const double z = x * x;
+    const double v = z * x;
+    const double r = S2 + z * (S3 + z * (S4 + z * (S5 + z * S6)));
+    if (iy == 0) {
+        return x + v * (S1 + z * r);
+    }
+    return x - ((z * (0.5 * y - v * r) - y) - v * S1);
+}
+
+double kernel_cos_det(double x, double y) noexcept {
+    const double C1 = u64_to_d(0x3FA555555555554Cull);
+    const double C2 = u64_to_d(0xBF56C16C16C15177ull);
+    const double C3 = u64_to_d(0x3EFA01A019CB1590ull);
+    const double C4 = u64_to_d(0xBE927E4F809C52ADull);
+    const double C5 = u64_to_d(0x3E21EE9EBDB4B1C4ull);
+    const double C6 = u64_to_d(0xBDA8FAE9BE8838D4ull);
+
+    const uint32_t ix = static_cast<uint32_t>(high_word(x)) & 0x7FFFFFFFu;
+    if (ix < 0x3E400000u) {
+        if (static_cast<int>(x) == 0) return 1.0;
+    }
+    const double z = x * x;
+    const double r = z * (C1 + z * (C2 + z * (C3 + z * (C4 + z * (C5 + z * C6)))));
+    if (ix < 0x3FD33333u) {
+        return 1.0 - (0.5 * z - (z * r - x * y));
+    }
+    const double qx = (ix > 0x3FE90000u) ? 0.25 : make_double(ix - 0x00200000u, 0u);
+    const double hz = 0.5 * z - qx;
+    const double a  = 1.0 - qx;
+    return a - (hz - (z * r - x * y));
+}
+
+double kernel_tan_det(double x, double y, int iy) noexcept {
+    static constexpr uint64_t kTCoeffBits[13] = {
+        0x3FD5555555555556ull, 0x3FC1111111111004ull, 0x3FABA1BA1BA3BF34ull,
+        0x3F9664F487699D27ull, 0x3F8226E37BC98DEFull, 0x3F6D6D344C85F477ull,
+        0x3F57DADBD30CECD3ull, 0x3F434D5CD4E06143ull, 0x3F2FE32C209C100Dull,
+        0x3F163FFF40DE796Dull, 0x3F105841EBD2A566ull, 0xBEE803858204B68Dull,
+        0x3EF895E2028E71A6ull,
+    };
+    const double pio4   = u64_to_d(0x3FE921FB54442D18ull);
+    const double pio4lo = u64_to_d(0x3C81A62633145C07ull);
+
+    const int32_t hx = high_word(x);
+    const uint32_t ix = static_cast<uint32_t>(hx) & 0x7FFFFFFFu;
+    if (ix < 0x3E300000u) {
+        if (static_cast<int>(x) == 0) {
+            if (((ix | low_word(x)) | static_cast<uint32_t>(iy + 1)) == 0u) {
+                return 1.0 / fabs_det(x);
+            }
+            return (iy == 1) ? x : (-1.0 / x);
+        }
+    }
+    if (ix >= 0x3FE59428u) {
+        if (hx < 0) {
+            x = -x;
+            y = -y;
+        }
+        const double z = pio4 - x;
+        const double w = pio4lo - y;
+        x = z + w;
+        y = 0.0;
+    }
+    const double z = x * x;
+    const double w = z * z;
+    double r = u64_to_d(kTCoeffBits[1]) + w * (u64_to_d(kTCoeffBits[3]) +
+        w * (u64_to_d(kTCoeffBits[5]) + w * (u64_to_d(kTCoeffBits[7]) +
+        w * (u64_to_d(kTCoeffBits[9]) + w * u64_to_d(kTCoeffBits[11])))));
+    const double v = z * (u64_to_d(kTCoeffBits[2]) + w * (u64_to_d(kTCoeffBits[4]) +
+        w * (u64_to_d(kTCoeffBits[6]) + w * (u64_to_d(kTCoeffBits[8]) +
+        w * (u64_to_d(kTCoeffBits[10]) + w * u64_to_d(kTCoeffBits[12]))))));
+    const double s = z * x;
+    r = y + z * (s * (r + v) + y);
+    r += u64_to_d(kTCoeffBits[0]) * s;
+    const double w2 = x + r;
+    if (ix >= 0x3FE59428u) {
+        const double fy = static_cast<double>(iy);
+        return ((hx < 0) ? -1.0 : 1.0) * (fy - 2.0 * (x - (w2 * w2 / (w2 + fy) - r)));
+    }
+    if (iy == 1) {
+        return w2;
+    }
+    const double z_hi = make_double_i(high_word(w2), 0u);
+    const double v2 = r - (z_hi - x);
+    const double a = -1.0 / w2;
+    const double t = make_double_i(high_word(a), 0u);
+    const double s2 = 1.0 + t * z_hi;
+    return t + a * (s2 + t * v2);
+}
+
+double det_sin(double x) noexcept {
+    const uint32_t ix = static_cast<uint32_t>(high_word(x)) & 0x7FFFFFFFu;
+    if (ix <= 0x3FE921FBu) {
+        return kernel_sin_det(x, 0.0, 0);
+    }
+    if (ix >= 0x7FF00000u) {
+        return x - x;
+    }
+    double y[2] = {};
+    const int n = rem_pio2_det(x, y);
+    switch (n & 3) {
+        case 0: return  kernel_sin_det(y[0], y[1], 1);
+        case 1: return  kernel_cos_det(y[0], y[1]);
+        case 2: return -kernel_sin_det(y[0], y[1], 1);
+        default: return -kernel_cos_det(y[0], y[1]);
+    }
+}
+
+double det_cos(double x) noexcept {
+    const uint32_t ix = static_cast<uint32_t>(high_word(x)) & 0x7FFFFFFFu;
+    if (ix <= 0x3FE921FBu) {
+        return kernel_cos_det(x, 0.0);
+    }
+    if (ix >= 0x7FF00000u) {
+        return x - x;
+    }
+    double y[2] = {};
+    const int n = rem_pio2_det(x, y);
+    switch (n & 3) {
+        case 0: return  kernel_cos_det(y[0], y[1]);
+        case 1: return -kernel_sin_det(y[0], y[1], 1);
+        case 2: return -kernel_cos_det(y[0], y[1]);
+        default: return  kernel_sin_det(y[0], y[1], 1);
+    }
+}
+
+double det_tan(double x) noexcept {
+    const uint32_t ix = static_cast<uint32_t>(high_word(x)) & 0x7FFFFFFFu;
+    if (ix <= 0x3FE921FBu) {
+        return kernel_tan_det(x, 0.0, 1);
+    }
+    if (ix >= 0x7FF00000u) {
+        return x - x;
+    }
+    double y[2] = {};
+    const int n = rem_pio2_det(x, y);
+    return kernel_tan_det(y[0], y[1], 1 - ((n & 1) << 1));
+}
+
+double det_atan(double x) noexcept {
+    static constexpr uint64_t kAtanHiBits[4] = {
+        0x3FDDAC670561BB4Full, 0x3FE921FB54442D18ull,
+        0x3FEF730BD281F69Bull, 0x3FF921FB54442D18ull,
+    };
+    static constexpr uint64_t kAtanLoBits[4] = {
+        0x3C7A2B7F222F65E2ull, 0x3C81A62633145C07ull,
+        0x3C8007988421B970ull, 0x3C91A62633145C07ull,
+    };
+    static constexpr uint64_t kAtCoeffBits[11] = {
+        0x3FD5555555555554ull, 0xBFC9999999998863ull, 0x3FC24924923B09BFull,
+        0xBFBC71C71366BFC2ull, 0x3FB745CFF64FB1E8ull, 0xBFB3B1161C0261B4ull,
+        0x3FB10ED20CC03917ull, 0xBFADF0BAD09FA62Cull, 0x3FA9C616E7E61A95ull,
+        0xBFA35DD3BA3A06ADull, 0x3F91F7E7048B0A6Full,
+    };
+
+    int32_t hx = 0;
+    uint32_t lx = 0;
+    extract_words(x, hx, lx);
+    const uint32_t ix = static_cast<uint32_t>(hx) & 0x7FFFFFFFu;
+
+    if (ix >= 0x44100000u) {
+        if (ix > 0x7FF00000u || (ix == 0x7FF00000u && lx != 0u)) {
+            return x + x;
+        }
+        const double v = u64_to_d(kAtanHiBits[3]) + u64_to_d(kAtanLoBits[3]);
+        return (hx > 0) ? v : -v;
+    }
+
+    int id = -1;
+    if (ix < 0x3FDC0000u) {
+        if (ix < 0x3E200000u) {
+            if (1.0e300 + x > 1.0) {
+                return x;
+            }
+        }
+    } else {
+        x = fabs_det(x);
+        if (ix < 0x3FF30000u) {
+            if (ix < 0x3FE60000u) {
+                id = 0;
+                x = (2.0 * x - 1.0) / (2.0 + x);
+            } else {
+                id = 1;
+                x = (x - 1.0) / (x + 1.0);
+            }
+        } else {
+            if (ix < 0x40038000u) {
+                id = 2;
+                x = (x - 1.5) / (1.0 + 1.5 * x);
+            } else {
+                id = 3;
+                x = -1.0 / x;
+            }
+        }
+    }
+
+    const double z = x * x;
+    const double w = z * z;
+    const double s1 = z * (u64_to_d(kAtCoeffBits[0]) + w * (u64_to_d(kAtCoeffBits[2]) +
+        w * (u64_to_d(kAtCoeffBits[4]) + w * (u64_to_d(kAtCoeffBits[6]) +
+        w * (u64_to_d(kAtCoeffBits[8]) + w * u64_to_d(kAtCoeffBits[10]))))));
+    const double s2 = w * (u64_to_d(kAtCoeffBits[1]) + w * (u64_to_d(kAtCoeffBits[3]) +
+        w * (u64_to_d(kAtCoeffBits[5]) + w * (u64_to_d(kAtCoeffBits[7]) +
+        w * u64_to_d(kAtCoeffBits[9])))));
+    if (id < 0) {
+        return x - x * (s1 + s2);
+    }
+    const double res = u64_to_d(kAtanHiBits[id]) - ((x * (s1 + s2) - u64_to_d(kAtanLoBits[id])) - x);
+    return (hx < 0) ? -res : res;
+}
+
+double det_acos(double x) noexcept {
+    const double pio2_hi = u64_to_d(0x3FF921FB54442D18ull);
+    const double pio2_lo = u64_to_d(0x3C91A62633145C07ull);
+    const double pS0     = u64_to_d(0x3FC5555555555555ull);
+    const double pS1     = u64_to_d(0xBFD4D61203EB6F7Dull);
+    const double pS2     = u64_to_d(0x3FC9C1550E884455ull);
+    const double pS3     = u64_to_d(0xBFA48228B5688F3Bull);
+    const double pS4     = u64_to_d(0x3F49EFE07501B288ull);
+    const double pS5     = u64_to_d(0x3F023DE10DFDF709ull);
+    const double qS1     = u64_to_d(0xC0033A271C8A2D4Bull);
+    const double qS2     = u64_to_d(0x40002AE59C598AC8ull);
+    const double qS3     = u64_to_d(0xBFE6066C1B8D0159ull);
+    const double qS4     = u64_to_d(0x3FB3B8C5B12E9282ull);
+
+    int32_t hx = 0;
+    uint32_t lx = 0;
+    extract_words(x, hx, lx);
+    const uint32_t ix = static_cast<uint32_t>(hx) & 0x7FFFFFFFu;
+
+    if (ix >= 0x3FF00000u) {
+        if (((ix - 0x3FF00000u) | lx) == 0u) {
+            return (hx > 0) ? 0.0 : (2.0 * pio2_hi + 2.0 * pio2_lo);
+        }
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    if (ix < 0x3FE00000u) {
+        if (ix <= 0x3C600000u) {
+            return pio2_hi + pio2_lo;
+        }
+        const double z = x * x;
+        const double p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * pS5)))));
+        const double q = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * qS4)));
+        const double r = x - (pio2_lo - x * (p / q));
+        return pio2_hi - r;
+    }
+    if (hx < 0) {
+        const double z = (1.0 + x) * 0.5;
+        const double p = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * pS5)))));
+        const double q = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * qS4)));
+        const double s = std::sqrt(z);
+        const double w = (p / q) * s - pio2_lo;
+        return 2.0 * (pio2_hi - (s + w));
+    }
+    const double z  = (1.0 - x) * 0.5;
+    const double s  = std::sqrt(z);
+    const double df = make_double_i(high_word(s), 0u);
+    const double c  = (z - df * df) / (s + df);
+    const double p  = z * (pS0 + z * (pS1 + z * (pS2 + z * (pS3 + z * (pS4 + z * pS5)))));
+    const double q  = 1.0 + z * (qS1 + z * (qS2 + z * (qS3 + z * qS4)));
+    const double w  = (p / q) * s + c;
+    return 2.0 * (df + w);
+}
+
+double det_pow(double x, double y) noexcept {
+    static constexpr double kBp[2]  = {1.0, 1.5};
+    const double dp_h[2]   = {0.0, u64_to_d(0x3FE2B80340000000ull)};
+    const double dp_l[2]   = {0.0, u64_to_d(0x3E4CFDEB43CFD006ull)};
+    static constexpr double kTwo53 = 9007199254740992.0;
+    static constexpr double kHuge  = 1.0e300;
+    static constexpr double kTiny  = 1.0e-300;
+    const double L1      = u64_to_d(0x3FE3333333333303ull);
+    const double L2      = u64_to_d(0x3FDB6DB6DB6FABFFull);
+    const double L3      = u64_to_d(0x3FD55555518F264Dull);
+    const double L4      = u64_to_d(0x3FD17460A91D4101ull);
+    const double L5      = u64_to_d(0x3FCD864A93C9DB65ull);
+    const double L6      = u64_to_d(0x3FCA7E284A454EEFull);
+    const double P1      = u64_to_d(0x3FC555555555553Eull);
+    const double P2      = u64_to_d(0xBF66C16C16BEBD93ull);
+    const double P3      = u64_to_d(0x3F11566AAF25DE2Cull);
+    const double P4      = u64_to_d(0xBEBBBD41C5D26BF1ull);
+    const double P5      = u64_to_d(0x3E66376972BEA4D0ull);
+    const double lg2     = u64_to_d(0x3FE62E42FEFA39EFull);
+    const double lg2_h   = u64_to_d(0x3FE62E4300000000ull);
+    const double lg2_l   = u64_to_d(0xBE205C610CA86C39ull);
+    const double ovt     = u64_to_d(0x3C971547652B82FEull);
+    const double cp      = u64_to_d(0x3FEEC709DC3A03FDull);
+    const double cp_h    = u64_to_d(0x3FEEC709E0000000ull);
+    const double cp_l    = u64_to_d(0xBE3E2FE0145B01F5ull);
+    const double ivln2   = u64_to_d(0x3FF71547652B82FEull);
+    const double ivln2_h = u64_to_d(0x3FF7154760000000ull);
+    const double ivln2_l = u64_to_d(0x3E54AE0BF85DDF44ull);
+
+    int32_t hx = 0, hy = 0;
+    uint32_t lx = 0, ly = 0;
+    extract_words(x, hx, lx);
+    extract_words(y, hy, ly);
+    uint32_t ix = static_cast<uint32_t>(hx) & 0x7FFFFFFFu;
+    const uint32_t iy = static_cast<uint32_t>(hy) & 0x7FFFFFFFu;
+
+    if ((iy | ly) == 0u) {
+        return 1.0;
+    }
+    if (ix > 0x7FF00000u || (ix == 0x7FF00000u && lx != 0u) ||
+        iy > 0x7FF00000u || (iy == 0x7FF00000u && ly != 0u)) {
+        return x + y;
+    }
+
+    int yisint = 0;
+    if (hx < 0) {
+        if (iy >= 0x43400000u) {
+            yisint = 2;
+        } else if (iy >= 0x3FF00000u) {
+            const uint32_t k = (iy >> 20) - 0x3FFu;
+            if (k > 20u) {
+                const uint32_t j = ly >> (52u - k);
+                if ((j << (52u - k)) == ly) yisint = 2 - static_cast<int>(j & 1u);
+            } else if (ly == 0u) {
+                const uint32_t j = iy >> (20u - k);
+                if ((j << (20u - k)) == iy) yisint = 2 - static_cast<int>(j & 1u);
+            }
+        }
+    }
+
+    if (ly == 0u) {
+        if (iy == 0x7FF00000u) {
+            if (((ix - 0x3FF00000u) | lx) == 0u) return y - y;
+            if (ix >= 0x3FF00000u) return (hy >= 0) ? y : 0.0;
+            return (hy >= 0) ? 0.0 : -y;
+        }
+        if (iy == 0x3FF00000u) {
+            return (hy < 0) ? (1.0 / x) : x;
+        }
+        if (hy == 0x40000000) {
+            return x * x;
+        }
+        if (hy == 0x3FE00000 && hx > 0) {
+            return std::sqrt(x);
+        }
+    }
+
+    double ax = fabs_det(x);
+    if (lx == 0u && (ix == 0x7FF00000u || ix == 0u || ix == 0x3FF00000u)) {
+        double z = ax;
+        if (hy < 0) z = 1.0 / z;
+        if (hx < 0) {
+            if (((ix - 0x3FF00000u) | static_cast<uint32_t>(yisint)) == 0u) {
+                z = (z - z) / (z - z);
+            } else if (yisint == 1) {
+                z = -z;
+            }
+        }
+        return z;
+    }
+
+    const int n_sign = (hx < 0) ? 0 : 1;
+    if ((n_sign | yisint) == 0) {
+        return (x - x) / (x - x);
+    }
+    double s = 1.0;
+    if ((n_sign | (yisint - 1)) == 0) {
+        s = -1.0;
+    }
+
+    double t1 = 0.0;
+    double t2 = 0.0;
+    if (iy > 0x41E00000u) {
+        if (iy > 0x43F00000u) {
+            if (ix <= 0x3FEFFFFFu) return (hy < 0) ? (kHuge * kHuge) : (kTiny * kTiny);
+            if (ix >= 0x3FF00000u) return (hy > 0) ? (kHuge * kHuge) : (kTiny * kTiny);
+        }
+        if (ix < 0x3FEFFFFFu) return (hy < 0) ? (s * kHuge * kHuge) : (s * kTiny * kTiny);
+        if (ix > 0x3FF00000u) return (hy > 0) ? (s * kHuge * kHuge) : (s * kTiny * kTiny);
+        const double t = ax - 1.0;
+        const double w = (t * t) * (0.5 - t * (0.33333333333333333333 - t * 0.25));
+        const double u = ivln2_h * t;
+        const double v = t * ivln2_l - w * ivln2;
+        t1 = make_double_i(high_word(u + v), 0u);
+        t2 = v - (t1 - u);
+    } else {
+        int32_t n_exp = 0;
+        if (ix < 0x00100000u) {
+            ax *= kTwo53;
+            n_exp -= 53;
+            ix = static_cast<uint32_t>(high_word(ax));
+        }
+        n_exp += static_cast<int32_t>(ix >> 20) - 0x3FF;
+        const uint32_t j = ix & 0x000FFFFFu;
+        ix = j | 0x3FF00000u;
+        int k = 0;
+        if (j <= 0x3988Eu) {
+            k = 0;
+        } else if (j < 0xBB67Au) {
+            k = 1;
+        } else {
+            k = 0;
+            n_exp += 1;
+            ix -= 0x00100000u;
+        }
+        ax = make_double(ix, low_word(ax));
+        const double u = ax - kBp[k];
+        const double v = 1.0 / (ax + kBp[k]);
+        const double ss = u * v;
+        const double ss_h = make_double_i(high_word(ss), 0u);
+        const double t_h  = make_double(((ix >> 1) | 0x20000000u) + 0x00080000u + (static_cast<uint32_t>(k) << 18), 0u);
+        const double t_l  = ax - (t_h - kBp[k]);
+        const double ss_l = v * ((u - ss_h * t_h) - ss_h * t_l);
+        double s2 = ss * ss;
+        double r  = s2 * s2 * (L1 + s2 * (L2 + s2 * (L3 + s2 * (L4 + s2 * (L5 + s2 * L6)))));
+        r += ss_l * (ss_h + ss);
+        s2 = ss_h * ss_h;
+        const double th2 = make_double_i(high_word(3.0 + s2 + r), 0u);
+        const double tl2 = r - ((th2 - 3.0) - s2);
+        const double u2  = ss_h * th2;
+        const double v2  = ss_l * th2 + tl2 * ss;
+        const double p_h = make_double_i(high_word(u2 + v2), 0u);
+        const double p_l = v2 - (p_h - u2);
+        const double z_h = cp_h * p_h;
+        const double z_l = cp_l * p_h + p_l * cp + dp_l[k];
+        const double t   = static_cast<double>(n_exp);
+        t1 = make_double_i(high_word(((z_h + z_l) + dp_h[k]) + t), 0u);
+        t2 = z_l - (((t1 - t) - dp_h[k]) - z_h);
+    }
+
+    const double y1 = make_double_i(high_word(y), 0u);
+    double p_l = (y - y1) * t1 + y * t2;
+    double p_h = y1 * t1;
+    double z = p_l + p_h;
+    int32_t j = 0;
+    uint32_t i = 0;
+    extract_words(z, j, i);
+    if (j >= 0x40900000) {
+        if (((static_cast<uint32_t>(j) - 0x40900000u) | i) != 0u) {
+            return s * kHuge * kHuge;
+        }
+        if (p_l + ovt > z - p_h) {
+            return s * kHuge * kHuge;
+        }
+    } else if ((static_cast<uint32_t>(j) & 0x7FFFFFFFu) >= 0x4090CC00u) {
+        if (((static_cast<uint32_t>(j) - 0xC090CC00u) | i) != 0u) {
+            return s * kTiny * kTiny;
+        }
+        if (p_l <= z - p_h) {
+            return s * kTiny * kTiny;
+        }
+    }
+
+    const uint32_t iu = static_cast<uint32_t>(j) & 0x7FFFFFFFu;
+    int32_t n_int = 0;
+    if (iu > 0x3FE00000u) {
+        const uint32_t k = (iu >> 20) - 0x3FFu;
+        uint32_t n_u = static_cast<uint32_t>(j) + (0x00100000u >> (k + 1u));
+        const uint32_t k2 = ((n_u & 0x7FFFFFFFu) >> 20) - 0x3FFu;
+        const double t = make_double(n_u & (~(0x000FFFFFu >> k2)), 0u);
+        const uint32_t mag = ((n_u & 0x000FFFFFu) | 0x00100000u) >> (20u - k2);
+        n_int = (j < 0) ? -static_cast<int32_t>(mag) : static_cast<int32_t>(mag);
+        p_h -= t;
+    }
+
+    const double t = make_double_i(high_word(p_l + p_h), 0u);
+    const double u = t * lg2_h;
+    const double v = (p_l - (t - p_h)) * lg2 + t * lg2_l;
+    z = u + v;
+    const double w = v - (z - u);
+    const double tt = z * z;
+    const double t_poly = z - tt * (P1 + tt * (P2 + tt * (P3 + tt * (P4 + tt * P5))));
+    const double r = (z * t_poly) / (t_poly - 2.0) - (w + z * w);
+    z = 1.0 - (r - z);
+    const int32_t jz = high_word(z) + (n_int << 20);
+    if ((jz >> 20) <= 0) {
+        z = scalbn_det(z, n_int);
+    } else {
+        z = make_double_i(jz, low_word(z));
+    }
+    return s * z;
+}
+
+} // namespace det_math
+
 // 0x004f49f0: _ftol2_sse() [custom_x87]
 void hle_crt_004f49f0(CpuContext& ctx, GuestMemory& mem) {
     const double v = ctx.fpu_pop();
@@ -2179,7 +3105,7 @@ void hle_crt_004f4a26(CpuContext& ctx, GuestMemory& mem) {
 
 // 0x0050e1d0: _CIatan() [custom_x87]
 void hle_crt_0050e1d0(CpuContext& ctx, GuestMemory& mem) {
-    ctx.fpu_st(0) = std::atan(ctx.fpu_st(0));
+    ctx.fpu_st(0) = det_math::det_atan(ctx.fpu_st(0));
     ctx.ret_cdecl(mem);
 }
 
@@ -2192,31 +3118,31 @@ void hle_crt_0050e2b0(CpuContext& ctx, GuestMemory& mem) {
 // 0x0050e8d0: _CIpow() [custom_x87: pops exponent st(0), replaces new st(0) with pow(base, exp)]
 void hle_crt_0050e8d0(CpuContext& ctx, GuestMemory& mem) {
     const double exp_v = ctx.fpu_pop();
-    ctx.fpu_st(0) = std::pow(ctx.fpu_st(0), exp_v);
+    ctx.fpu_st(0) = det_math::det_pow(ctx.fpu_st(0), exp_v);
     ctx.ret_cdecl(mem);
 }
 
 // 0x0050eb60: _CIsin() [custom_x87]
 void hle_crt_0050eb60(CpuContext& ctx, GuestMemory& mem) {
-    ctx.fpu_st(0) = std::sin(ctx.fpu_st(0));
+    ctx.fpu_st(0) = det_math::det_sin(ctx.fpu_st(0));
     ctx.ret_cdecl(mem);
 }
 
 // 0x0050ec90: _CIcos() [custom_x87]
 void hle_crt_0050ec90(CpuContext& ctx, GuestMemory& mem) {
-    ctx.fpu_st(0) = std::cos(ctx.fpu_st(0));
+    ctx.fpu_st(0) = det_math::det_cos(ctx.fpu_st(0));
     ctx.ret_cdecl(mem);
 }
 
 // 0x0050edc0: _CIacos() [custom_x87]
 void hle_crt_0050edc0(CpuContext& ctx, GuestMemory& mem) {
-    ctx.fpu_st(0) = std::acos(ctx.fpu_st(0));
+    ctx.fpu_st(0) = det_math::det_acos(ctx.fpu_st(0));
     ctx.ret_cdecl(mem);
 }
 
 // 0x00513030: _CItan() [custom_x87]
 void hle_crt_00513030(CpuContext& ctx, GuestMemory& mem) {
-    ctx.fpu_st(0) = std::tan(ctx.fpu_st(0));
+    ctx.fpu_st(0) = det_math::det_tan(ctx.fpu_st(0));
     ctx.ret_cdecl(mem);
 }
 

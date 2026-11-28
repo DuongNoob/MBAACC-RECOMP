@@ -1,6 +1,8 @@
 #include "mbaa_recomp/dispatch.h"
 #include "mbaa_recomp/hle_crt.h"
+#include "mbaa_recomp/hle_input.h"
 #include "mbaa_recomp/hle_win32.h"
+#include "mbaa_recomp/netplay_rollback.h"
 
 #include <atomic>
 #include <cstdio>
@@ -18,7 +20,36 @@ std::unordered_map<uint32_t, RecompFn> g_com_thunks;
 std::atomic<uint32_t> g_next_com_thunk{GuestMemory::kComThunkBase};
 std::atomic<uint32_t> g_unresolved_calls{0};
 
+// Netplay indirect-dispatch hook for PollInputDevice (0x004a00b0, invoked via
+// vtable slot +0x14 inside sub_0041f080). Pass-through when offline.
+// Direct C++ calls in build_gen/ (sub_004330c0/sub_004bdbc0 frame limiter, etc.)
+// are governed via [0x0055D25C] and HLE boundaries without editing build_gen/.
+RecompFn g_orig_004a00b0 = nullptr;
+
+void netplay_wrap_004a00b0(CpuContext& ctx, GuestMemory& mem) {
+    if (input_handle_poll_input_device(ctx, mem)) {
+        return;
+    }
+    if (g_orig_004a00b0 != nullptr) {
+        g_orig_004a00b0(ctx, mem);
+    }
+}
+
 } // namespace
+
+void register_dispatch_netplay_overrides(bool active) {
+    std::unique_lock<std::shared_mutex> lock(g_dispatch_mutex);
+    auto it = g_fn_table.find(0x004A00B0u);
+    if (it == g_fn_table.end()) return;
+    if (active) {
+        if (it->second != &netplay_wrap_004a00b0) {
+            g_orig_004a00b0 = it->second;
+            it->second = &netplay_wrap_004a00b0;
+        }
+    } else if (g_orig_004a00b0 != nullptr) {
+        it->second = g_orig_004a00b0;
+    }
+}
 
 void register_function(uint32_t va, RecompFn fn) {
     if (fn == nullptr) return;
@@ -55,6 +86,7 @@ void clear_dispatch_table() {
     g_com_thunks.clear();
     g_next_com_thunk.store(GuestMemory::kComThunkBase, std::memory_order_relaxed);
     g_unresolved_calls.store(0u, std::memory_order_relaxed);
+    g_orig_004a00b0 = nullptr;
 }
 
 void call_indirect(CpuContext& ctx, GuestMemory& mem, uint32_t target_va) {

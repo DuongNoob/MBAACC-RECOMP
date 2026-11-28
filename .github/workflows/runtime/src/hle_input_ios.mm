@@ -72,6 +72,10 @@ struct InputState {
     std::array<CombinedPadSnapshot, 2> pads{};
     std::atomic<bool> has_gc{false};
     std::atomic<bool> initialized{false};
+    std::atomic<bool> netplay_override{false};
+    // Packed atomic netplay inputs: low 16 = dir, high 16 = button mask.
+    std::atomic<uint32_t> netplay_p1_packed{0u};
+    std::atomic<uint32_t> netplay_p2_packed{0u};
 
     // Guest COM vtables and objects
     uint32_t di8_vtable     = 0;
@@ -88,6 +92,18 @@ struct InputState {
 };
 
 InputState g_input;
+
+void decode_netplay_word(uint16_t raw,
+                         bool mask_spectator_auto_confirm,
+                         uint32_t& out_dir,
+                         uint32_t& out_btns) noexcept {
+    if (mask_spectator_auto_confirm) {
+        raw = static_cast<uint16_t>(raw & ~0x0020u);
+    }
+    const uint32_t dir = static_cast<uint32_t>(raw & 0x000Fu);
+    out_dir  = (dir == 5u || dir > 9u) ? 0u : dir;
+    out_btns = static_cast<uint32_t>((raw >> 4) & 0x0FFFu);
+}
 
 uint32_t expand_macros(uint32_t raw_buttons) noexcept {
     uint32_t b = raw_buttons;
@@ -339,7 +355,7 @@ void dev_enum_objects(CpuContext& ctx, GuestMemory& mem) {
 // Ensures MBAA.exe's in-memory PadConfig (0x0074DA18, stride 0x164) stays bound to
 // iOS virtual/GCController pads with canonical button slots even when a PC System/_KeyConfig.ini
 // (e.g. P0_Num=0 or a different USB stick like Xin-Mo Controller) is present in Assets.
-void sync_ios_pad_config(GuestMemory& mem) {
+void sync_ios_pad_config(GuestMemory& mem, bool p2_connected) {
     constexpr uint32_t kPadConfigBaseVa  = 0x0074DA18u;
     constexpr uint32_t kPadConfigStride  = 0x00000164u;
     constexpr uint32_t kJoyVecBeginVa    = 0x0076E9B8u;
@@ -394,7 +410,7 @@ void sync_ios_pad_config(GuestMemory& mem) {
     };
 
     ensure_slot(0u, 1u, "iOS Controller P1");
-    if (joy_count >= 2u && g_input.pads[1].connected) {
+    if (joy_count >= 2u && p2_connected) {
         ensure_slot(1u, 2u, "iOS Controller P2");
     }
 }
@@ -413,11 +429,24 @@ void dev_get_device_state(CpuContext& ctx, GuestMemory& mem) {
 
     mem.zero_bytes(lpv_va, cb_data);
 
+    if (g_input.netplay_override.load(std::memory_order_acquire)) {
+        ctx.eax = kDI_OK;
+        ctx.ret_stdcall(mem, 12u);
+        return;
+    }
+
     const auto kind = static_cast<DiDeviceKind>(mem.r32(this_va + 4u));
     const uint32_t pad_idx = mem.r32(this_va + 8u) & 1u;
 
-    const CombinedPadSnapshot& p1 = g_input.pads[0];
-    const CombinedPadSnapshot& p  = g_input.pads[pad_idx];
+    CombinedPadSnapshot p1{};
+    CombinedPadSnapshot p{};
+    bool p2_connected = false;
+    {
+        std::lock_guard<std::mutex> lock(g_input.touch_mutex);
+        p1 = g_input.pads[0];
+        p  = g_input.pads[pad_idx];
+        p2_connected = g_input.pads[1].connected;
+    }
 
     if (kind == DiDeviceKind::Keyboard && cb_data >= 256u) {
         // Bridge Touch + P1 GCController to exact MBAA.exe P1 DIK scancodes (0x0054d2c0)
@@ -433,7 +462,7 @@ void dev_get_device_state(CpuContext& ctx, GuestMemory& mem) {
         if (b & kTouchE)      mem.w8(lpv_va + kDIK_E, 0x80u);
         if (b & kTouchStart)  mem.w8(lpv_va + kDIK_Q, 0x80u);
     } else if (kind == DiDeviceKind::Gamepad && cb_data >= 272u) {
-        sync_ios_pad_config(mem);
+        sync_ios_pad_config(mem, p2_connected);
 
         // DIJOYSTATE2 (0x110 = 272 bytes):
         //   +0x00 lX, +0x04 lY (scaled by 0.1275 in MBAA.exe 0x00410725 -> use -1000..+1000)
@@ -620,8 +649,11 @@ void input_poll_platform() {
 
     p2.buttons = expand_macros(p2.buttons);
 
-    g_input.pads[0] = p1;
-    g_input.pads[1] = p2;
+    {
+        std::lock_guard<std::mutex> lock(g_input.touch_mutex);
+        g_input.pads[0] = p1;
+        g_input.pads[1] = p2;
+    }
 }
 
 bool input_has_gc_controller() {
@@ -629,7 +661,14 @@ bool input_has_gc_controller() {
 }
 
 int16_t input_get_vk_state(int vk_code) {
-    const uint32_t b = g_input.pads[0].buttons;
+    if (g_input.netplay_override.load(std::memory_order_acquire)) {
+        return 0;
+    }
+    uint32_t b = 0u;
+    {
+        std::lock_guard<std::mutex> lock(g_input.touch_mutex);
+        b = g_input.pads[0].buttons;
+    }
     bool down = false;
     switch (vk_code) {
         case 'W': down = (b & kTouchUp) != 0; break;
@@ -645,6 +684,104 @@ int16_t input_get_vk_state(int vk_code) {
         default: break;
     }
     return down ? static_cast<int16_t>(-32767) : 0;
+}
+
+uint16_t input_encode_local_word() {
+    CombinedPadSnapshot p1{};
+    {
+        std::lock_guard<std::mutex> lock(g_input.touch_mutex);
+        p1 = g_input.pads[0];
+    }
+    const uint32_t b = expand_macros(p1.buttons);
+    const bool up    = ((b & kTouchUp) != 0u)    || (p1.axis_y < -0.35f);
+    const bool down  = ((b & kTouchDown) != 0u)  || (p1.axis_y > 0.35f);
+    const bool left  = ((b & kTouchLeft) != 0u)  || (p1.axis_x < -0.35f);
+    const bool right = ((b & kTouchRight) != 0u) || (p1.axis_x > 0.35f);
+
+    int horiz = 0;
+    if (left && !right) horiz = -1;
+    else if (right && !left) horiz = +1;
+    int vert = 0;
+    if (down && !up) vert = -1;
+    else if (up && !down) vert = +1;
+
+    uint16_t dir = 0u;
+    if (vert != 0 || horiz != 0) {
+        dir = static_cast<uint16_t>(5 + 3 * vert + horiz);
+    }
+
+    uint16_t btns = 0u;
+    if (b & kTouchStart) btns |= 0x0001u;
+    if (b & kTouchD)     btns |= 0x0004u;
+    if (b & kTouchC)     btns |= 0x0008u;
+    if (b & kTouchA)     btns |= (0x0010u | 0x0400u);
+    if (b & kTouchB)     btns |= (0x0020u | 0x0800u);
+    if (b & kTouchDash)  btns |= 0x0040u;
+    if (b & kTouchE)     btns |= 0x0080u;
+    if (b & kTouchFN1)   btns |= 0x0100u;
+    if (b & kTouchFN2)   btns |= 0x0200u;
+
+    return static_cast<uint16_t>((btns << 4) | (dir & 0x000Fu));
+}
+
+void input_set_netplay_override(bool active) {
+    g_input.netplay_override.store(active, std::memory_order_release);
+    if (!active) {
+        g_input.netplay_p1_packed.store(0u, std::memory_order_relaxed);
+        g_input.netplay_p2_packed.store(0u, std::memory_order_relaxed);
+    }
+}
+
+bool input_is_netplay_override() {
+    return g_input.netplay_override.load(std::memory_order_acquire);
+}
+
+void input_inject_netplay_pair(GuestMemory& mem,
+                               uint16_t p1_word,
+                               uint16_t p2_word,
+                               bool mask_spectator_auto_confirm) {
+    uint32_t p1_dir = 0u, p1_btns = 0u;
+    uint32_t p2_dir = 0u, p2_btns = 0u;
+    decode_netplay_word(p1_word, mask_spectator_auto_confirm, p1_dir, p1_btns);
+    decode_netplay_word(p2_word, mask_spectator_auto_confirm, p2_dir, p2_btns);
+
+    g_input.netplay_p1_packed.store(((p1_btns & 0xFFFFu) << 16) | (p1_dir & 0xFFFFu),
+                                    std::memory_order_release);
+    g_input.netplay_p2_packed.store(((p2_btns & 0xFFFFu) << 16) | (p2_dir & 0xFFFFu),
+                                    std::memory_order_release);
+
+    constexpr uint32_t kInputMgrPtrVa = 0x0076E6ACu;
+    if (!mem.in_bounds(kInputMgrPtrVa, 4u)) return;
+    const uint32_t mgr = mem.r32(kInputMgrPtrVa);
+    if (mgr == 0u || !mem.in_bounds(mgr + 0x18u, 0x24u)) return;
+
+    mem.w32(mgr + 0x18u, p1_dir);
+    mem.w32(mgr + 0x24u, p1_btns);
+    mem.w32(mgr + 0x2Cu, p2_dir);
+    mem.w32(mgr + 0x38u, p2_btns);
+}
+
+bool input_handle_poll_input_device(CpuContext& ctx, GuestMemory& mem) {
+    if (!g_input.netplay_override.load(std::memory_order_acquire)) {
+        return false;
+    }
+    const uint32_t player_idx = ctx.arg32(mem, 0);
+    const uint32_t out_va     = ctx.arg32(mem, 1);
+
+    if (out_va != 0u && mem.in_bounds(out_va, 20u)) {
+        mem.zero_bytes(out_va, 20u);
+        if (player_idx == 0u || player_idx == 1u) {
+            const uint32_t packed = (player_idx == 0u)
+                ? g_input.netplay_p1_packed.load(std::memory_order_acquire)
+                : g_input.netplay_p2_packed.load(std::memory_order_acquire);
+            mem.w32(out_va + 0x00u, packed & 0xFFFFu);
+            mem.w32(out_va + 0x0Cu, (packed >> 16) & 0xFFFFu);
+        }
+    }
+
+    ctx.eax = 0u;
+    ctx.ret_stdcall(mem, 8u);
+    return true;
 }
 
 // DirectInput8Create(hinst, dwVersion, riidltf, ppvOut, punkOuter) -> 20 bytes

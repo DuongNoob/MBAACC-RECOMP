@@ -957,6 +957,7 @@ struct D3D9MetalBridge::Impl {
     bool in_scene    = false;
     bool guest_presented_this_frame = false;
     bool encoder_rt_dirty = true;
+    std::atomic<bool> skip_render{false};
     uint32_t active_encoder_mrt_count = 0u;
     bool scissor_valid = false;
     MTLScissorRect scissor_rect{0, 0, 640, 480};
@@ -1480,7 +1481,7 @@ struct D3D9MetalBridge::Impl {
         const uint8_t* idata,
         uint32_t index_fmt)
     {
-        if (!vdata || prim_count == 0u || vcount == 0u) return;
+        if (skip_render.load(std::memory_order_acquire) || !vdata || prim_count == 0u || vcount == 0u) return;
 
         @autoreleasepool {
             // Determine active pass & effect parameters
@@ -2311,6 +2312,12 @@ void com_dev_reset(CpuContext& ctx, GuestMemory& mem) {
 void com_dev_present(CpuContext& ctx, GuestMemory& mem) {
     if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        if (im->skip_render.load(std::memory_order_acquire)) {
+            im->guest_presented_this_frame = true;
+            ctx.eax = kS_OK;
+            ctx.ret_stdcall(mem, 20u);
+            return;
+        }
         ++im->present_calls;
         if (im->present_calls == 1u) {
             hle_win32_log("First D3D9 Present call (in_frame=%d draws=%llu)",
@@ -2535,6 +2542,11 @@ void com_dev_stretch_rect(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t filter      = ctx.arg32(mem, 5);
     if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        if (im->skip_render.load(std::memory_order_acquire)) {
+            ctx.eax = kS_OK;
+            ctx.ret_stdcall(mem, 24u);
+            return;
+        }
         @autoreleasepool {
             id<MTLTexture> src_tex = im->resolve_surface_texture(mem, src_va);
             id<MTLTexture> dst_tex = im->resolve_surface_texture(mem, dst_va);
@@ -2645,6 +2657,11 @@ void com_dev_color_fill(CpuContext& ctx, GuestMemory& mem) {
     const uint32_t color   = ctx.arg32(mem, 3);
     if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        if (im->skip_render.load(std::memory_order_acquire)) {
+            ctx.eax = kS_OK;
+            ctx.ret_stdcall(mem, 16u);
+            return;
+        }
         @autoreleasepool {
             id<MTLTexture> dst_tex = im->resolve_surface_texture(mem, surf_va);
             if (dst_tex != nil && (dst_tex.usage & MTLTextureUsageRenderTarget) != 0u) {
@@ -2995,7 +3012,9 @@ void ensure_bitmap_fonts_merged_with_jp_fallback(D3D9MetalBridge::Impl& im, Gues
 void com_dev_begin_scene(CpuContext& ctx, GuestMemory& mem) {
     if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
-        ensure_bitmap_fonts_merged_with_jp_fallback(*im, mem);
+        if (!im->skip_render.load(std::memory_order_acquire)) {
+            ensure_bitmap_fonts_merged_with_jp_fallback(*im, mem);
+        }
         im->in_scene = true;
     }
     ctx.eax = kS_OK;
@@ -3005,7 +3024,9 @@ void com_dev_begin_scene(CpuContext& ctx, GuestMemory& mem) {
 void com_dev_end_scene(CpuContext& ctx, GuestMemory& mem) {
     if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
-        im->end_active_encoder();
+        if (!im->skip_render.load(std::memory_order_acquire)) {
+            im->end_active_encoder();
+        }
         im->in_scene = false;
     }
     ctx.eax = kS_OK;
@@ -3022,6 +3043,11 @@ void com_dev_clear(CpuContext& ctx, GuestMemory& mem) {
     std::memcpy(&z_val, &z_bits, sizeof(float));
     if (auto* im = active_impl()) {
         std::lock_guard<std::recursive_mutex> lk(im->mtx);
+        if (im->skip_render.load(std::memory_order_acquire)) {
+            ctx.eax = kS_OK;
+            ctx.ret_stdcall(mem, 28u);
+            return;
+        }
         ++im->clear_calls;
         im->end_active_encoder();
         im->encoder_rt_dirty = true;
@@ -4205,7 +4231,7 @@ int32_t draw_d3dx_font_nsstring(
         }
     }
 
-    if ((format & 0x00000400u) == 0u) {
+    if ((format & 0x00000400u) == 0u && !im.skip_render.load(std::memory_order_acquire)) {
         std::vector<uint8_t> buf(static_cast<size_t>(tex_w) * tex_h * 4u, 0u);
         CGContextRef cgCtx = CGBitmapContextCreate(
             buf.data(), tex_w, tex_h, 8, tex_w * 4u, cs,
@@ -4913,7 +4939,7 @@ void D3D9MetalBridge::resize(int width, int height) {
 
 void D3D9MetalBridge::begin_frame() {
     std::lock_guard<std::recursive_mutex> lk(impl_->mtx);
-    if (!impl_->initialized) return;
+    if (!impl_->initialized || impl_->skip_render.load(std::memory_order_acquire)) return;
     impl_->in_frame = true;
     impl_->guest_presented_this_frame = false;
     impl_->ensure_cmd_buffer();
@@ -4921,10 +4947,22 @@ void D3D9MetalBridge::begin_frame() {
 
 void D3D9MetalBridge::end_frame_and_present() {
     std::lock_guard<std::recursive_mutex> lk(impl_->mtx);
-    if (!impl_->initialized) return;
+    if (!impl_->initialized || impl_->skip_render.load(std::memory_order_acquire)) return;
     impl_->present_backbuffer_to_layer();
     impl_->in_frame = false;
     impl_->guest_presented_this_frame = false;
+}
+
+void D3D9MetalBridge::set_skip_render(bool skip) {
+    std::lock_guard<std::recursive_mutex> lk(impl_->mtx);
+    if (skip) {
+        impl_->end_active_encoder();
+    }
+    impl_->skip_render.store(skip, std::memory_order_release);
+}
+
+bool D3D9MetalBridge::skip_render() const noexcept {
+    return impl_->skip_render.load(std::memory_order_acquire);
 }
 
 void D3D9MetalBridge::evict_on_memory_warning() {
